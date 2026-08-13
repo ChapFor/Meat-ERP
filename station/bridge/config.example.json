@@ -1,0 +1,15 @@
+{
+  "port": 9410,
+  "scale": {
+    "sim": false,
+    "port": "COM3",
+    "baud": 9600,
+    "pollCmd": "W\r",
+    "pollMs": 250
+  },
+  "printer": {
+    "sim": false,
+    "host": "192.168.1.50",
+    "port": 9100
+  }
+}

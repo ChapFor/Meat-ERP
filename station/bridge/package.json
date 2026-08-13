@@ -1,0 +1,12 @@
+{
+  "name": "meat-erp-station-bridge",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local hardware bridge: Mettler Toledo BC scale (serial) + Zebra ZT411 (raw ZPL) for the Chapel Ford ERP Station screen.",
+  "scripts": {
+    "start": "node bridge.js"
+  },
+  "dependencies": {
+    "serialport": "^12.0.0"
+  }
+}
