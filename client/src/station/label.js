@@ -13,7 +13,7 @@ const TEMPLATE = `^XA
 ^FO30,155^A0N,24,24^FDLot: {LOT_CODE}^FS
 ^FO420,155^A0N,24,24^FDSerial: {SERIAL}^FS
 
-^FO30,220^BY3
+^FO30,220^BY2
 ^BCN,140,N,N,N
 ^FD{ZPL_FIELD_DATA}^FS
 
@@ -28,7 +28,11 @@ const TEMPLATE = `^XA
 const clean = (s) => String(s).replace(/[\^~]/g, ' ');
 
 export function fillLabel({ productName, weightLb, packDate, lotCode, serial, zplFieldData, humanReadable }) {
-  const d = packDate instanceof Date ? packDate : new Date(packDate + 'T00:00:00');
+  // pack_date is a bare YYYY-MM-DD from the lot form but a full ISO timestamp
+  // when the lot came back from the API — take the date part either way.
+  const d = packDate instanceof Date
+    ? packDate
+    : new Date(String(packDate).slice(0, 10) + 'T00:00:00');
   const human = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   return TEMPLATE
     .replace('{PRODUCT_NAME}', clean(productName))

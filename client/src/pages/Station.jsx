@@ -42,7 +42,10 @@ export default function Station() {
 
   // stale-lot guard: a lot from a previous day never carries over
   useEffect(() => {
-    if (lot && lot.pack_date !== todayISO()) { setLot(null); localStorage.removeItem('cf_station_lot'); }
+    // pack_date may be a full ISO timestamp when the lot came from the API
+    if (lot && String(lot.pack_date).slice(0, 10) !== todayISO()) {
+      setLot(null); localStorage.removeItem('cf_station_lot');
+    }
   }, []);
 
   // Products come from the cloud; the cache keeps the dropdown usable offline.
@@ -123,7 +126,7 @@ export default function Station() {
         if (!cloudDown(err)) throw err;                  // real rejection (bad item/lot)
         offline = true; setCloudOk(false);
         serial = offlineSerial(lot.lot_code, stationId);
-        const bc = { itemCode: product.code, weightLb, packDate: lot.pack_date, lotCode: lot.lot_code, serial };
+        const bc = { itemCode: product.code, weightLb, lotCode: lot.lot_code, serial };
         zfd = zplFieldData(bc); hr = humanReadable(bc);
         enqueue({ ...payload, serial });
         setQueued(loadQueue().length);

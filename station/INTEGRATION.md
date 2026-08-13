@@ -37,16 +37,28 @@ Live template: `client/src/station/label.js` (filled in the browser).
 `station/gs1128_label.zpl` is the same layout kept as a plain-ZPL reference —
 keep the two in sync if the label changes.
 
-## Barcode content (GS1-128)
-| AI | Field | Format |
-|----|-------|--------|
-| 13 | Pack date | YYMMDD |
-| 3202 | Net weight lb | 6 digits, 2 implied decimals (14.50 → 001450) |
-| 91 | Internal item code | your PLU |
-| 10 | Lot | e.g. 260812-B2 |
-| 21 | Case serial | unique |
+## Barcode content (GS1-128, compact encoding)
+| AI | Field | Encoded as |
+|----|-------|-----------|
+| 3202 | Net weight lb | 6 digits, 2 implied decimals (4.51 → 000451) |
+| 91 | Internal item code | your PLU, e.g. `176` |
+| 10 | Lot | digits only: `260812-B2` → `2608122` |
+| 21 | Case serial suffix | `0001` (full serial is `{lot}-{suffix}`) |
+
+```
+(3202)000451(91)176(10)2608132(21)0001
+>;>8320200045191176>8102608132>8210001
+```
+
+`(13)` pack date is deliberately absent — it is already the lot's YYMMDD prefix,
+and scan-in derives it from there. The lot and serial are compacted because the
+full form measures 9.3in at `^BY3`; this one is 3.58in at `^BY2` and fits the 4in
+label. Keep PLUs numeric: an alphanumeric item code overflows the label at 5
+characters.
 
 Internal-use only — (91) replaces a GTIN, so the 10-GTIN prefix limit never applies.
+The API parser also accepts the older full-form encoding, so labels printed
+before this change still scan.
 
 ## Scanner setup
 Keyboard-wedge mode. Ideally configure the scanner to transmit the AIM ID (`]C1`)

@@ -24,12 +24,25 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
 - PENDING is never sellable inventory.
 - Lot = per batch within a day. Lot code format: `YYMMDD-B{n}` (e.g. `260812-B2`).
 - Barcodes are GS1-128, internal-use only (no customer scanning). AIs:
-  `(13)` pack date YYMMDD · `(3202)` net wt lb, 6 digits, 2 implied decimals ·
-  `(91)` internal item code (PLU — used instead of GTINs; the farm's 11-digit GS1
-  prefix only allows 10 GTINs, so we deliberately avoid GTINs) · `(10)` lot ·
-  `(21)` case serial (`{lot}-{seq}`, or station-generated when offline).
+  `(3202)` net wt lb, 6 digits, 2 implied decimals · `(91)` internal item code
+  (PLU — used instead of GTINs; the farm's 11-digit GS1 prefix only allows 10
+  GTINs, so we deliberately avoid GTINs) · `(10)` lot · `(21)` case serial suffix.
+- **Compact encoding** (the full form is 9.3in at `^BY3` and will not fit a 4in
+  label). The barcode drops `(13)` — the pack date is already the lot's YYMMDD
+  prefix, and scan-in derives it from there — encodes the lot as digits
+  (`260812-B2` → `2608122`) and carries only the serial suffix
+  (`260812-B2-0001` → `0001`). The dash and `B` are what matter: they force Code
+  128 out of numeric subset C and double their own cost. Database values keep
+  their full readable forms; only the wire encoding shrinks. Measured 3.58in at
+  `^BY2`, so the label prints at `^BY2` (9.85 mil, GS1 minimum).
+- Item codes: numeric codes fit to 12+ chars, but **alphanumeric codes overflow
+  the 4in label at 5 chars** (worst case: offline serial + batch ≥ 10). Keep
+  PLUs numeric.
 - Encode/parse lives in `server/src/gs1.js` — parser accepts `]C1` AIM prefix,
-  ASCII GS separators, and hand-typed parenthesized form. Keep it that way.
+  ASCII GS separators, hand-typed parenthesized form, **and both the compact and
+  the pre-2026-08 full encodings**, so labels already in the cooler still scan.
+  It returns database-shaped values (full lot code, full serial) either way.
+  Keep it that way.
 - Scan-in is self-healing: if the station upload never arrived, the barcode alone
   can recreate the case (see `POST /api/scan/in`).
 - Weights are lb throughout. Catch-weight business: invoicing will be driven by
@@ -39,6 +52,9 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
   locally, payload queued in localStorage, `POST /api/cases` self-heals unknown
   lots on upload. `client/src/station/gs1.js` mirrors the server encoders — keep
   the two in sync.
+- Offline serial suffix must stay **numeric** (station digit + 5-digit counter
+  keyed on the lot). An alphanumeric suffix pushes the symbol to 4.55in and off
+  the label. 6 digits cannot collide with the server's 4-digit sequence.
 - Item code (PLU) is restricted to `[A-Za-z0-9-]` because it is printed into both
   the ZPL stream (`^`/`~` are control chars) and the GS1 element string.
 - Master data is editable in-app: Items (products) and Customers. Deactivating
