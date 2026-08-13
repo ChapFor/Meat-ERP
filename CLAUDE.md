@@ -1,15 +1,19 @@
 # Chapel Ford Meat ERP
 
 VistaTrac-style ERP for a pasture-raised poultry/meat farm doing wholesale.
-Phase 1 (built): inventory, order entry, pack-to-order with GS1-128 case labels.
+Built: inventory, order entry, pack-to-order with GS1-128 case labels, the
+weigh-label station itself, and customer/item master data.
 Roadmap: batching + yield tracking, shipping docs (BOL/pack slip PDF), QuickBooks
-invoice export (IIF/CSV first), simple auth (shared passcode), station integration.
+invoice export (IIF/CSV first), simple auth (shared passcode).
 
 ## Architecture
 - `server/` — Node/Express (ESM) + Postgres (`pg`). Serves `client/dist` in production.
-- `client/` — React + Vite. Four screens: Scan-in, Inventory, Orders, Packing.
-- `station/` — ZPL GS1-128 template + integration notes for the Zebra ZT411
-  weigh-label station (Mettler Toledo BC scale, Windows PC, keyboard-wedge scanners).
+- `client/` — React + Vite. Screens: Station, Scan-in, Inventory, Orders, Packing,
+  Customers, Items.
+- `station/bridge/` — local Node service on the station PC. The browser can't open
+  a COM port or a raw socket, so the bridge does both: polls the Mettler Toledo BC
+  scale over serial and sends ZPL to the Zebra ZT411 on tcp/9100. The Station
+  screen talks to it at `http://localhost:9410`.
 - Deployed on Railway: GitHub push → auto-deploy. Root `package.json` builds client
   then installs server; server serves everything on one service.
 
@@ -29,7 +33,16 @@ invoice export (IIF/CSV first), simple auth (shared passcode), station integrati
 - Scan-in is self-healing: if the station upload never arrived, the barcode alone
   can recreate the case (see `POST /api/scan/in`).
 - Weights are lb throughout. Catch-weight business: invoicing will be driven by
-  actual shipped case weights, not ordered quantities.
+  actual shipped case weights, not ordered quantities — so customer order history
+  reports packed/shipped lb, not ordered qty.
+- The Station screen prints offline when the cloud is down: serial generated
+  locally, payload queued in localStorage, `POST /api/cases` self-heals unknown
+  lots on upload. `client/src/station/gs1.js` mirrors the server encoders — keep
+  the two in sync.
+- Item code (PLU) is restricted to `[A-Za-z0-9-]` because it is printed into both
+  the ZPL stream (`^`/`~` are control chars) and the GS1 element string.
+- Master data is editable in-app: Items (products) and Customers. Deactivating
+  either is a soft flag; existing cases and orders keep their history.
 
 ## Conventions
 - Migrations: numbered files in `server/migrations/`, additive only, never edited
@@ -48,4 +61,10 @@ invoice export (IIF/CSV first), simple auth (shared passcode), station integrati
 ```
 server: cp .env.example .env  → npm install && npm run migrate && npm run seed && npm run dev
 client: npm install && npm run dev   (proxies /api to :3001)
+bridge: cd station/bridge && npm install && cp config.example.json config.json
+        (set scale.sim/printer.sim = true to run without hardware) && npm start
 ```
+
+## Deploy notes
+- Railway service **Root Directory must be empty** — the app lives at the repo
+  root. Do not commit `node_modules/` or `client/dist/`.

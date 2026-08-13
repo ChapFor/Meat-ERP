@@ -1,18 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-export default function Orders() {
+export default function Orders({ go }) {
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ customer_id: '', po_number: '', ship_date: '', lines: [] });
-  const [newCust, setNewCust] = useState('');
+  const [stamp, setStamp] = useState(null);
 
+  // fetched independently: one failing endpoint must not blank the whole screen
   const refresh = async () => {
-    setOrders(await api.get('/api/orders'));
-    setCustomers(await api.get('/api/customers'));
-    setProducts(await api.get('/api/products'));
+    const [o, c, p] = await Promise.allSettled([
+      api.get('/api/orders'), api.get('/api/customers'), api.get('/api/products'),
+    ]);
+    if (o.status === 'fulfilled') setOrders(o.value);
+    if (c.status === 'fulfilled') setCustomers(c.value);
+    if (p.status === 'fulfilled') setProducts(p.value);
+    const failed = [o, c, p].find((r) => r.status === 'rejected');
+    if (failed) setStamp({ kind: 'bad', title: 'COULD NOT LOAD', detail: failed.reason.message });
   };
   useEffect(() => { refresh(); }, []);
 
@@ -22,23 +28,23 @@ export default function Orders() {
     const lines = [...f.lines]; lines[i] = { ...lines[i], [k]: v }; return { ...f, lines };
   });
 
-  const addCustomer = async () => {
-    if (!newCust.trim()) return;
-    const c = await api.post('/api/customers', { name: newCust.trim() });
-    setNewCust(''); await refresh();
-    setForm((f) => ({ ...f, customer_id: c.id }));
-  };
-
   const save = async () => {
     const lines = form.lines
       .filter((l) => l.product_id)
       .map((l) => ({ product_id: Number(l.product_id),
         qty_cases: l.qty_cases ? Number(l.qty_cases) : null,
         qty_lb: l.qty_lb ? Number(l.qty_lb) : null }));
-    if (!form.customer_id || lines.length === 0) return alert('Pick a customer and add at least one line.');
-    await api.post('/api/orders', { ...form, customer_id: Number(form.customer_id), lines });
-    setForm({ customer_id: '', po_number: '', ship_date: '', lines: [] });
-    setShowNew(false); refresh();
+    if (!form.customer_id || lines.length === 0)
+      return setStamp({ kind: 'bad', title: 'INCOMPLETE', detail: 'Pick a customer and add at least one line.' });
+    try {
+      const o = await api.post('/api/orders', { ...form, customer_id: Number(form.customer_id), lines });
+      setForm({ customer_id: '', po_number: '', ship_date: '', lines: [] });
+      setShowNew(false);
+      setStamp({ kind: 'ok', title: 'ORDER SAVED', detail: `#${o.id} · ${lines.length} line${lines.length === 1 ? '' : 's'}` });
+      refresh();
+    } catch (err) {
+      setStamp({ kind: 'bad', title: 'NOT SAVED', detail: err.message });
+    }
   };
 
   return (
@@ -55,7 +61,7 @@ export default function Orders() {
           <div className="row">
             <div className="field"><label>Customer</label>
               <select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })}>
-                <option value="">Select…</option>
+                <option value="">{customers.length ? 'Select…' : 'No customers yet'}</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
@@ -65,9 +71,10 @@ export default function Orders() {
               <input type="date" value={form.ship_date} onChange={(e) => setForm({ ...form, ship_date: e.target.value })} /></div>
           </div>
           <div className="row" style={{ marginTop: 8 }}>
-            <div className="field"><label>Add customer</label>
-              <input value={newCust} placeholder="Name" onChange={(e) => setNewCust(e.target.value)} /></div>
-            <button className="btn secondary" onClick={addCustomer}>Add</button>
+            <button className="btn secondary mini" onClick={() => go?.('Customers')}>
+              {customers.length ? 'Manage customers' : 'Add a customer first'}
+            </button>
+            <button className="btn secondary mini" onClick={() => go?.('Items')}>Manage items</button>
           </div>
           <div className="eyebrow">Lines</div>
           {form.lines.map((l, i) => (
@@ -90,6 +97,8 @@ export default function Orders() {
           </div>
         </div>
       )}
+
+      {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
 
       {orders.length === 0 && <div className="panel"><div className="empty">No orders yet. Create one to start packing.</div></div>}
       {orders.map((o) => (

@@ -92,6 +92,17 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
   color: var(--muted); cursor: pointer; }
 .autotoggle input { width: 22px; height: 22px; accent-color: var(--violet); }
 
+/* Customer directory + items */
+.custcard { padding: 12px 14px; }
+.custmeta { font-size: 13px; color: var(--muted); font-weight: 400; }
+.linkish { background: none; border: none; padding: 0; text-align: left; color: inherit;
+  font: inherit; flex: 1; min-width: 0; }
+.linkish:hover strong { text-decoration: underline; }
+.linkish:focus-visible { outline: 3px solid var(--violet); outline-offset: 3px; border-radius: 6px; }
+td.lbl { width: 110px; color: var(--muted); font-size: 12px; letter-spacing: .1em;
+  text-transform: uppercase; font-weight: 700; }
+main a { color: var(--violet); }
+
 .progress { height: 8px; background: var(--line); border-radius: 999px; overflow: hidden; }
 .progress div { height: 100%; background: var(--ok); }
 .empty { color: var(--muted); text-align: center; padding: 24px 0; }

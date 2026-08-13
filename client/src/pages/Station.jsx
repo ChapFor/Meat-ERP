@@ -33,6 +33,8 @@ export default function Station() {
   const [auto, setAuto] = useState(false);
   const [stamp, setStamp] = useState(null);
   const [prints, setPrints] = useState(loadPrints());
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItem, setNewItem] = useState({ code: '', name: '' });
 
   const armedRef = useRef(true);
   const printingRef = useRef(false);
@@ -43,16 +45,33 @@ export default function Station() {
     if (lot && lot.pack_date !== todayISO()) { setLot(null); localStorage.removeItem('cf_station_lot'); }
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const ps = await api.get('/api/products');
-        setProducts(ps.filter((p) => p.active !== false));
-        localStorage.setItem('cf_products_cache', JSON.stringify(ps));
-        setCloudOk(true);
-      } catch { setCloudOk(false); }
-    })();
-  }, []);
+  // Products come from the cloud; the cache keeps the dropdown usable offline.
+  const loadProducts = async () => {
+    const ps = (await api.get('/api/products')).filter((p) => p.active !== false);
+    setProducts(ps);
+    localStorage.setItem('cf_products_cache', JSON.stringify(ps));
+    setCloudOk(true);
+    return ps;
+  };
+  useEffect(() => { loadProducts().catch(() => setCloudOk(false)); }, []);
+
+  // Add an item without leaving the station, then select it for this run.
+  const addItem = async () => {
+    const code = newItem.code.trim(), name = newItem.name.trim();
+    if (!code || !name)
+      return setStamp({ kind: 'bad', title: 'MISSING FIELD', detail: 'Item code and name are both required.' });
+    try {
+      const p = await api.post('/api/products', { code, name });
+      await loadProducts();
+      setItemCode(p.code);
+      localStorage.setItem('cf_station_item', p.code);
+      setNewItem({ code: '', name: '' });
+      setAddingItem(false);
+      setStamp({ kind: 'ok', title: 'ITEM ADDED', detail: `${p.name} · code ${p.code} — selected for this run` });
+    } catch (err) {
+      setStamp({ kind: 'bad', title: 'ITEM NOT ADDED', detail: err.message });
+    }
+  };
 
   // live weight @ 400ms; bridge health @ 5s; queue flush @ 30s
   useEffect(() => {
@@ -183,10 +202,33 @@ export default function Station() {
           <div className="field">
             <label>Product</label>
             <select value={itemCode} onChange={(e) => { setItemCode(e.target.value); localStorage.setItem('cf_station_item', e.target.value); }}>
-              <option value="">Select product…</option>
+              <option value="">{products.length ? 'Select product…' : 'No items yet — add one →'}</option>
               {products.map((p) => <option key={p.code} value={p.code}>{p.name} ({p.code})</option>)}
             </select>
           </div>
+          <button className="btn secondary" style={{ alignSelf: 'flex-end' }}
+            onClick={() => { setAddingItem(!addingItem); setStamp(null); }}>
+            {addingItem ? 'Cancel' : '+ New item'}
+          </button>
+        </div>
+
+        {addingItem && (
+          <div className="row" style={{ marginTop: 8 }}>
+            <div className="field" style={{ maxWidth: 150 }}>
+              <label>Item code (PLU)</label>
+              <input value={newItem.code} autoFocus placeholder="176"
+                onChange={(e) => setNewItem({ ...newItem, code: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Name</label>
+              <input value={newItem.name} placeholder="Whole Chicken"
+                onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} />
+            </div>
+            <button className="btn" onClick={addItem} style={{ alignSelf: 'flex-end' }}>Add item</button>
+          </div>
+        )}
+
+        <div className="row" style={{ marginTop: 8 }}>
           <div className="field" style={{ maxWidth: 170 }}>
             <label>Pack date</label>
             <input type="date" value={packDate} onChange={(e) => setPackDate(e.target.value)} />

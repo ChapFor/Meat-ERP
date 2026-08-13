@@ -5,7 +5,8 @@ VistaTrac-style foundation; batching/yields and QuickBooks export bolt on next.
 
 ## Layout
 - `server/` — Node/Express API + Postgres schema (migrations, seed)
-- `client/` — React app: Station (weigh + print), Scan-in, Inventory, Orders, Packing
+- `client/` — React app: Station (weigh + print), Scan-in, Inventory, Orders,
+  Packing, Customers, Items
 - `station/` — local hardware bridge for the station PC (scale serial + ZT411
   raw ZPL) + label reference and integration notes
 
@@ -17,6 +18,8 @@ shows a live "printed, not yet scanned" list so nothing goes missing.
 ## Run locally
 1. Postgres running; copy `server/.env.example` → `server/.env`, set `DATABASE_URL`.
 2. `cd server && npm install && npm run migrate && npm run seed && npm run dev`
+   (`npm run migrate` applies `001`; apply later migrations with
+   `psql "$DATABASE_URL" -f migrations/NNN_*.sql`)
 3. `cd client && npm install && npm run dev` → http://localhost:5173
 
 ## Deploy (Railway or similar)
