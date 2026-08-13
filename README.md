@@ -17,13 +17,14 @@ shows a live "printed, not yet scanned" list so nothing goes missing.
 
 ## Run locally
 1. Postgres running; copy `server/.env.example` → `server/.env`, set `DATABASE_URL`.
-2. `cd server && npm install && npm run migrate && npm run seed && npm run dev`
-   (`npm run migrate` applies `001`; apply later migrations with
-   `psql "$DATABASE_URL" -f migrations/NNN_*.sql`)
+2. `cd server && npm install && npm run seed && npm run dev`
+   (migrations apply themselves on boot; `npm run migrate` runs them standalone)
 3. `cd client && npm install && npm run dev` → http://localhost:5173
 
 ## Deploy (Railway or similar)
-- Provision Postgres, set `DATABASE_URL`, run `npm run migrate && npm run seed` once.
+- Provision Postgres and set `DATABASE_URL`; migrations apply on every boot.
+  Seed the starter item list once with `npm run seed` (or add items in-app).
+- Service **Root Directory must be empty** — the app lives at the repo root.
 - `cd client && npm run build`, then `cd server && npm start` — the API serves
   `client/dist` itself, so one service hosts everything.
 - On the station PC: open the deployed app in Chrome (Station tab) and run the

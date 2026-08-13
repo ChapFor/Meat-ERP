@@ -46,8 +46,13 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
 
 ## Conventions
 - Migrations: numbered files in `server/migrations/`, additive only, never edited
-  after being run. Applied manually: `psql "$DATABASE_URL" -f server/migrations/NNN_*.sql`.
-  Always tell the user explicitly when a change includes a migration.
+  after being run. **Applied automatically on server boot** by `server/src/migrate.js`
+  (ledger in `schema_migrations`, one transaction per file, advisory-locked). A
+  failed migration aborts startup rather than serving a half-migrated schema, so
+  a bad migration takes the app down — test one against a scratch database first.
+  `npm run migrate` runs the same code by hand. Databases predating the runner are
+  baselined at `001` automatically. Always tell the user explicitly when a change
+  includes a migration.
 - No ORM — plain SQL via `q()` helper in `server/src/db.js`.
 - API routes under `server/src/routes/`, one file per resource.
 - Frontend: no router lib (tab state in `App.jsx`), no CSS framework — all styles

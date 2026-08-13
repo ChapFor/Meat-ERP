@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql",
+    "migrate": "node src/migrate.js",
     "seed": "psql \"$DATABASE_URL\" -f seed/seed.sql"
   },
   "dependencies": {

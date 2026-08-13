@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { migrate } from './migrate.js';
 import products from './routes/products.js';
 import customers from './routes/customers.js';
 import lots from './routes/lots.js';
@@ -34,5 +35,9 @@ app.use((err, _req, res, _next) => {
   res.status(err.status || 500).json({ error: err.message || 'server error' });
 });
 
+// Migrate before serving: a half-migrated schema would fail in confusing ways
+// on the plant floor, so refuse to come up instead.
 const port = process.env.PORT || 3001;
-app.listen(port, () => console.log(`meat-erp api on :${port}`));
+migrate()
+  .then(() => app.listen(port, () => console.log(`meat-erp api on :${port}`)))
+  .catch((e) => { console.error(`startup aborted — ${e.message}`); process.exit(1); });
