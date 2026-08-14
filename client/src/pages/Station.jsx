@@ -139,7 +139,8 @@ export default function Station() {
       try { await bridge.print(zpl); }
       catch (err) { printed = false; printErr = err.message; }
 
-      const rec = { serial, caseId, productName: product.name, weightLb, zpl, at: Date.now(), printed };
+      const rec = { serial, caseId, productName: product.name, itemCode: product.code,
+        lotCode: lot.lot_code, weightLb, zpl, at: Date.now(), printed };
       const next = [rec, ...loadPrints()].slice(0, 200);
       localStorage.setItem(printsKey(), JSON.stringify(next));
       setPrints(next);
@@ -162,6 +163,46 @@ export default function Station() {
       doPrint(wt.lb);
     }
   }, [wt]);
+
+  // Packs printed for the current product+lot that are not in a case yet.
+  const openPacks = prints.filter((p) => !p.boxed && !p.voided && p.printed
+    && p.itemCode === product?.code && p.lotCode === lot?.lot_code);
+
+  // Close the case: group those packs into a container and print the case label.
+  // Needs the cloud — the container serial and the parent links are assigned
+  // server-side. The packs are individually labelled either way, so an offline
+  // run just means closing the case once the connection is back.
+  const closeCase = async () => {
+    if (!openPacks.length) return;
+    try {
+      const box = await api.post('/api/cases/container',
+        { child_serials: openPacks.map((p) => p.serial) });
+      const zpl = fillLabel({
+        productName: `CASE OF ${box.pack_count} - ${product.name}`,
+        weightLb: box.net_weight_lb, packDate: lot.pack_date,
+        lotCode: lot.lot_code, serial: box.serial,
+        zplFieldData: box.zpl_field_data, humanReadable: box.human_readable,
+      });
+      let printed = true, printErr = null;
+      try { await bridge.print(zpl); } catch (err) { printed = false; printErr = err.message; }
+
+      const boxedSerials = new Set(openPacks.map((p) => p.serial));
+      const rec = { serial: box.serial, caseId: box.id, productName: `CASE OF ${box.pack_count} - ${product.name}`,
+        itemCode: product.code, lotCode: lot.lot_code, weightLb: Number(box.net_weight_lb),
+        zpl, at: Date.now(), printed, boxed: true, isCase: true };
+      const next = [rec, ...loadPrints().map((p) =>
+        boxedSerials.has(p.serial) ? { ...p, boxed: true } : p)].slice(0, 200);
+      localStorage.setItem(printsKey(), JSON.stringify(next));
+      setPrints(next);
+      setStamp(printed
+        ? { kind: 'ok', title: 'CASE CLOSED',
+            detail: `${box.pack_count} packs · ${Number(box.net_weight_lb).toFixed(2)} lb · ${box.serial}` }
+        : { kind: 'bad', title: 'CASE LABEL NOT PRINTED', detail: `${printErr} — case ${box.serial} saved; use Reprint.` });
+    } catch (err) {
+      setStamp({ kind: 'bad', title: 'CASE NOT CLOSED',
+        detail: cloudDown(err) ? 'needs the cloud — packs are labelled, close the case when back online' : err.message });
+    }
+  };
 
   const reprint = async (rec) => {
     try {
@@ -273,6 +314,14 @@ export default function Station() {
             Auto-print on stable weight
           </label>
         </div>
+        {openPacks.length > 0 && (
+          <div className="row" style={{ marginTop: 12, justifyContent: 'center' }}>
+            <button className="btn secondary" onClick={closeCase}>
+              Close case — {openPacks.length} pack{openPacks.length === 1 ? '' : 's'},{' '}
+              {openPacks.reduce((s, p) => s + Number(p.weightLb), 0).toFixed(2)} lb
+            </button>
+          </div>
+        )}
       </div>
 
       {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
@@ -283,7 +332,7 @@ export default function Station() {
           <table><tbody>
             {prints.map((p) => (
               <tr key={p.serial} style={p.voided ? { opacity: .45 } : undefined}>
-                <td>{p.productName}</td>
+                <td>{p.productName}{p.boxed && !p.isCase && <span className="custmeta"> · in case</span>}</td>
                 <td className="num">{Number(p.weightLb).toFixed(2)} lb</td>
                 <td><span className="serial">{p.serial}</span></td>
                 <td>{p.voided ? <span className="chip VOID">VOID</span> : !p.printed ? <span className="chip PENDING">NOT PRINTED</span> : null}</td>

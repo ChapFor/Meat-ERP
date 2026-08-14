@@ -9,8 +9,10 @@ r.get('/', async (req, res, next) => {
         (SELECT json_agg(json_build_object(
            'id', ol.id, 'product_id', ol.product_id, 'product_name', p.name,
            'item_code', p.code, 'qty_cases', ol.qty_cases, 'qty_lb', ol.qty_lb, 'notes', ol.notes,
-           'packed_cases', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')),
-           'packed_lb', COALESCE((SELECT SUM(c.net_weight_lb) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')),0)
+           'packed_cases', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
+              AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),
+           'packed_lb', COALESCE((SELECT SUM(c.net_weight_lb) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
+              AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),0)
          ) ORDER BY ol.id)
          FROM order_lines ol JOIN products p ON p.id = ol.product_id
          WHERE ol.order_id = o.id) AS lines

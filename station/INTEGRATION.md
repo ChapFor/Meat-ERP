@@ -12,6 +12,19 @@ Browser (Station tab, served from the cloud)
        └─ tcp 9100 → Zebra ZT411             (raw ZPL)
 ```
 
+## Packs and cases
+A pack and a case carry the same kind of label. The station prints one per pack
+as they are weighed, then **Close case** groups the packs printed for the current
+product and lot into a container and prints the case label showing
+`CASE OF n - <product>` and the summed weight.
+
+Scanning the case label acts on everything inside it: scan-in admits all its
+packs, and pack-to-order allocates the packs still in stock. To fill a mixed
+order, break the case open and scan individual pack labels — only those packs
+are allocated and the rest stay on hand. Closing a case needs the cloud (the
+container serial and the links are assigned server-side); packs are labelled
+either way, so an offline run just means closing the case once back online.
+
 ## Flow (per case)
 1. Operator picks product + lot on the Station tab (lot = pack date + batch,
    `YYMMDD-B{n}`; find-or-create via `POST /api/lots`).

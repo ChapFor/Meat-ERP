@@ -22,7 +22,8 @@ r.get('/', async (req, res, next) => {
          COALESCE((SELECT SUM(c.net_weight_lb) FROM cases c
                    JOIN order_lines ol ON ol.id = c.order_line_id
                    JOIN orders o ON o.id = ol.order_id
-                   WHERE o.customer_id = cu.id AND c.status IN ('ALLOCATED','SHIPPED')),0) AS lifetime_lb
+                   WHERE o.customer_id = cu.id AND c.status IN ('ALLOCATED','SHIPPED')
+                     AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),0) AS lifetime_lb
        FROM customers cu
        WHERE ($1::bool IS TRUE OR cu.active)
        ORDER BY cu.name`,
@@ -39,9 +40,11 @@ r.get('/:id/orders', async (req, res, next) => {
       `SELECT o.id, o.po_number, o.order_date, o.ship_date, o.status,
          (SELECT COUNT(*) FROM order_lines ol WHERE ol.order_id = o.id)::int AS line_count,
          (SELECT COUNT(*) FROM cases c JOIN order_lines ol ON ol.id = c.order_line_id
-            WHERE ol.order_id = o.id AND c.status IN ('ALLOCATED','SHIPPED'))::int AS cases_packed,
+            WHERE ol.order_id = o.id AND c.status IN ('ALLOCATED','SHIPPED')
+              AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id))::int AS cases_packed,
          COALESCE((SELECT SUM(c.net_weight_lb) FROM cases c JOIN order_lines ol ON ol.id = c.order_line_id
-            WHERE ol.order_id = o.id AND c.status IN ('ALLOCATED','SHIPPED')),0) AS lb_packed
+            WHERE ol.order_id = o.id AND c.status IN ('ALLOCATED','SHIPPED')
+              AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),0) AS lb_packed
        FROM orders o WHERE o.customer_id = $1
        ORDER BY o.order_date DESC, o.id DESC LIMIT 100`,
       [req.params.id]);

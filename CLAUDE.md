@@ -22,6 +22,21 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
   → pack scan against an order → **ALLOCATED** → **SHIPPED**. Misprints stay
   PENDING and get voided; the Scan-in screen lists "printed, not yet scanned."
 - PENDING is never sellable inventory.
+- **Packs inside cases.** `cases.parent_id` self-references, so one table covers
+  both levels: no parent and no children = a standalone unit (a whole chicken);
+  no parent with children = a container case (a box of packs); parent set = a
+  pack in that box. The station prints a label per pack, then "Close case"
+  groups them and prints the case label (`POST /api/cases/container`; one
+  product and one lot per case, since pack-to-order matches a line by product).
+  Scanning a case label acts on its packs — scan-in admits them all, pack-to-order
+  allocates the ones still IN_STOCK, un-pack releases only those that went out on
+  that same order line. Scanning a single pack breaks the case open and allocates
+  just that pack.
+- **Counts are leaf-only.** A container and its packs both carry `order_line_id`,
+  so every count and weight sum must exclude rows that have children
+  (`NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)`), or shipped
+  weight doubles. This applies to inventory, order lines, and customer history —
+  the packs carry the catch weights that drive invoicing, the box does not.
 - Lot = per batch within a day. Lot code format: `YYMMDD-B{n}` (e.g. `260812-B2`).
 - Barcodes are GS1-128, internal-use only (no customer scanning). AIs:
   `(3202)` net wt lb, 6 digits, 2 implied decimals · `(91)` internal item code
