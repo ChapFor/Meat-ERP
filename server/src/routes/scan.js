@@ -68,7 +68,9 @@ r.post('/pack', async (req, res, next) => {
     const line = (await q(
       `SELECT ol.*,
          (SELECT COUNT(*) FROM cases x WHERE x.order_line_id = ol.id AND x.status IN ('ALLOCATED','SHIPPED')
-            AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = x.id)) AS packed_cases,
+            AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = x.id)) AS packed_packs,
+         (SELECT COUNT(*) FROM cases x WHERE x.order_line_id = ol.id AND x.status IN ('ALLOCATED','SHIPPED')
+            AND EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = x.id)) AS packed_cases,
          (SELECT COALESCE(SUM(x.net_weight_lb),0) FROM cases x WHERE x.order_line_id = ol.id AND x.status IN ('ALLOCATED','SHIPPED')
             AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = x.id)) AS packed_lb
        FROM order_lines ol
@@ -77,9 +79,11 @@ r.post('/pack', async (req, res, next) => {
     if (!line)
       return res.status(409).json({ error: `${c.product_name} is not on this order` });
 
-    const overCases = line.qty_cases && Number(line.packed_cases) >= line.qty_cases;
+    // compare like with like: a line ordered in cases is measured in cases
+    const packedInUnit = line.qty_unit === 'case' ? line.packed_cases : line.packed_packs;
+    const overQty = line.qty_cases && Number(packedInUnit) >= line.qty_cases;
     const overLb = line.qty_lb && Number(line.packed_lb) >= Number(line.qty_lb);
-    const warning = (overCases || overLb) ? 'line already at/over ordered quantity' : null;
+    const warning = (overQty || overLb) ? 'line already at/over ordered quantity' : null;
 
     // Scanning a case label allocates the packs inside it, not the box: the
     // packs carry the catch weights that drive invoicing. Scanning one pack

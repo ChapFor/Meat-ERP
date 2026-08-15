@@ -40,8 +40,14 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
 - **Vocabulary is packs and cases**, and the API says so: `packs_in_stock` /
   `packs_allocated` / `packs_pending` and `pack_count` are leaf counts, while
   `cases_in_stock` counts containers that are still intact (nothing picked out).
-  `order_lines.qty_cases` is the exception — it is counted in **packs** and the
-  UI labels it "Packs"; the column keeps its old name to avoid a rename migration.
+  `order_lines.qty_cases` is the exception — it holds the quantity and
+  `order_lines.qty_unit` (`pack` | `case`, default `pack`) says what it counts;
+  the column keeps its old name to avoid a rename migration. A line ordered in
+  cases is measured in **containers allocated to it**, not packs, so a case of 12
+  advances a case-line by 1. `client/src/lineProgress.js` is the single place
+  that decides which number a line is compared against — keep Orders and Packing
+  using it rather than re-deriving. `packed_lb` is always the real leaf weight
+  whatever the unit, since that is what invoicing bills.
 - Lot = per batch within a day. Lot code format: `YYMMDD-B{n}` (e.g. `260812-B2`).
 - Barcodes are GS1-128, internal-use only (no customer scanning). AIs:
   `(3202)` net wt lb, 6 digits, 2 implied decimals · `(91)` internal item code

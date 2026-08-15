@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { lineProgress } from '../lineProgress.js';
 
 export default function Packing() {
   const [orders, setOrders] = useState([]);
@@ -73,15 +74,14 @@ export default function Packing() {
           <div className="panel">
             <table><tbody>
               {(order.lines || []).map((l) => {
-                const done = l.qty_cases ? l.packed_cases >= l.qty_cases
-                  : Number(l.packed_lb) >= Number(l.qty_lb || 0);
+                const pr = lineProgress(l);
                 return (
                   <tr key={l.id}>
                     <td>{l.product_name}</td>
-                    <td className="num">
-                      {l.qty_cases ? `${l.packed_cases}/${l.qty_cases} packs` : `${Number(l.packed_lb).toFixed(1)}/${Number(l.qty_lb).toFixed(1)} lb`}
+                    <td className="num">{pr.text}
+                      {pr.unit !== 'lb' && <span className="custmeta"> · {pr.lb.toFixed(1)} lb</span>}
                     </td>
-                    <td>{done ? <span className="chip IN_STOCK">DONE</span> : <span className="chip PENDING">OPEN</span>}</td>
+                    <td>{pr.complete ? <span className="chip IN_STOCK">DONE</span> : <span className="chip PENDING">OPEN</span>}</td>
                   </tr>
                 );
               })}

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { lineProgress } from '../lineProgress.js';
 
 export default function Orders({ go }) {
   const [orders, setOrders] = useState([]);
@@ -23,17 +24,19 @@ export default function Orders({ go }) {
   useEffect(() => { refresh(); }, []);
 
   const addLine = () => setForm((f) => ({ ...f,
-    lines: [...f.lines, { product_id: '', qty_cases: '', qty_lb: '' }] }));
+    lines: [...f.lines, { product_id: '', qty: '', unit: 'pack' }] }));
   const setLine = (i, k, v) => setForm((f) => {
     const lines = [...f.lines]; lines[i] = { ...lines[i], [k]: v }; return { ...f, lines };
   });
 
   const save = async () => {
+    // one amount + a unit: lb goes in qty_lb, packs/cases in qty_cases + qty_unit
     const lines = form.lines
-      .filter((l) => l.product_id)
+      .filter((l) => l.product_id && l.qty)
       .map((l) => ({ product_id: Number(l.product_id),
-        qty_cases: l.qty_cases ? Number(l.qty_cases) : null,
-        qty_lb: l.qty_lb ? Number(l.qty_lb) : null }));
+        qty_cases: l.unit === 'lb' ? null : Number(l.qty),
+        qty_unit: l.unit === 'lb' ? undefined : l.unit,
+        qty_lb: l.unit === 'lb' ? Number(l.qty) : null }));
     if (!form.customer_id || lines.length === 0)
       return setStamp({ kind: 'bad', title: 'INCOMPLETE', detail: 'Pick a customer and add at least one line.' });
     try {
@@ -85,10 +88,15 @@ export default function Orders({ go }) {
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
-              <div className="field"><label>Packs</label>
-                <input inputMode="numeric" value={l.qty_cases} onChange={(e) => setLine(i, 'qty_cases', e.target.value)} /></div>
-              <div className="field"><label>Or lb</label>
-                <input inputMode="decimal" value={l.qty_lb} onChange={(e) => setLine(i, 'qty_lb', e.target.value)} /></div>
+              <div className="field" style={{ maxWidth: 110 }}><label>Qty</label>
+                <input inputMode="decimal" value={l.qty}
+                  onChange={(e) => setLine(i, 'qty', e.target.value)} /></div>
+              <div className="field" style={{ maxWidth: 130 }}><label>Unit</label>
+                <select value={l.unit} onChange={(e) => setLine(i, 'unit', e.target.value)}>
+                  <option value="pack">packs</option>
+                  <option value="case">full cases</option>
+                  <option value="lb">lb</option>
+                </select></div>
             </div>
           ))}
           <div className="row" style={{ marginTop: 10 }}>
@@ -111,18 +119,21 @@ export default function Orders({ go }) {
             {o.po_number ? `PO ${o.po_number} · ` : ''}ship {o.ship_date ? o.ship_date.slice(0, 10) : 'TBD'}
           </div>
           <table style={{ marginTop: 8 }}><tbody>
-            {(o.lines || []).map((l) => (
-              <tr key={l.id}>
-                <td>{l.product_name}</td>
-                <td className="num">
-                  {l.qty_cases ? `${l.packed_cases}/${l.qty_cases} packs` : `${Number(l.packed_lb).toFixed(1)}/${Number(l.qty_lb).toFixed(1)} lb`}
-                </td>
-                <td style={{ width: '40%' }}>
-                  <div className="progress"><div style={{ width: `${Math.min(100,
-                    100 * (l.qty_cases ? l.packed_cases / l.qty_cases : l.packed_lb / (l.qty_lb || 1)))}%` }} /></div>
-                </td>
-              </tr>
-            ))}
+            {(o.lines || []).map((l) => {
+              const pr = lineProgress(l);
+              return (
+                <tr key={l.id}>
+                  <td>{l.product_name}</td>
+                  <td className="num">{pr.text}
+                    {pr.unit !== 'lb' && <span className="custmeta"> · {pr.lb.toFixed(1)} lb</span>}
+                  </td>
+                  <td style={{ width: '40%' }}>
+                    <div className="progress"><div style={{ width: `${Math.min(100,
+                      100 * (pr.goal ? pr.done / pr.goal : 0))}%` }} /></div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody></table>
         </div>
       ))}

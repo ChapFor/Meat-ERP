@@ -8,9 +8,13 @@ r.get('/', async (req, res, next) => {
       `SELECT o.*, cu.name AS customer_name,
         (SELECT json_agg(json_build_object(
            'id', ol.id, 'product_id', ol.product_id, 'product_name', p.name,
-           'item_code', p.code, 'qty_cases', ol.qty_cases, 'qty_lb', ol.qty_lb, 'notes', ol.notes,
-           'packed_cases', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
+           'item_code', p.code, 'qty_cases', ol.qty_cases, 'qty_unit', ol.qty_unit,
+           'qty_lb', ol.qty_lb, 'notes', ol.notes,
+           -- packs are leaves; cases are the containers allocated to this line
+           'packed_packs', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
               AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),
+           'packed_cases', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
+              AND EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),
            'packed_lb', COALESCE((SELECT SUM(c.net_weight_lb) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
               AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),0)
          ) ORDER BY ol.id)
@@ -34,10 +38,11 @@ r.post('/', async (req, res, next) => {
        VALUES ($1,$2,$3,$4) RETURNING *`, [customer_id, po_number, ship_date || null, notes]);
     const order = rows[0];
     for (const ln of lines) {
+      const unit = ln.qty_unit === 'case' ? 'case' : 'pack';
       await client.query(
-        `INSERT INTO order_lines (order_id, product_id, qty_cases, qty_lb, notes)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [order.id, ln.product_id, ln.qty_cases || null, ln.qty_lb || null, ln.notes || null]);
+        `INSERT INTO order_lines (order_id, product_id, qty_cases, qty_unit, qty_lb, notes)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [order.id, ln.product_id, ln.qty_cases || null, unit, ln.qty_lb || null, ln.notes || null]);
     }
     await client.query('COMMIT');
     res.status(201).json(order);
