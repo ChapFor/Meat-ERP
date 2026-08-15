@@ -12,14 +12,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// --sim forces scale and printer simulation and falls back to the example
+// config, so the pack can be proven on a PC before any hardware is set up.
+const SIM = process.argv.includes('--sim');
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const cfgPath = path.join(dir, 'config.json');
-if (!fs.existsSync(cfgPath)) {
-  console.error('No config.json — copy config.example.json to config.json and edit it.');
+const cfgPath = fs.existsSync(path.join(dir, 'config.json'))
+  ? path.join(dir, 'config.json')
+  : (SIM ? path.join(dir, 'config.example.json') : null);
+if (!cfgPath) {
+  console.error('No config.json — run 1-configure.bat (or copy config.example.json to config.json).');
   process.exit(1);
 }
 // tolerate a UTF-8 BOM — Windows editors/PowerShell often add one
 const config = JSON.parse(fs.readFileSync(cfgPath, 'utf8').replace(/^\uFEFF/, ''));
+if (SIM) { config.scale.sim = true; config.printer.sim = true; }
 
 // ---------------- scale ----------------
 // Readings ring buffer; "stable" = ≥3 readings in the last 1.2s within 0.02 lb.

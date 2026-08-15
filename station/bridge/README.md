@@ -1,5 +1,11 @@
 # Station bridge — setup (one-time, on the station PC)
 
+> Installing on the station itself? Use **START-HERE.txt** and the numbered
+> `.bat` files instead — they cover the same steps without a terminal. Build the
+> flash-drive pack by running `npm install` here and zipping this folder
+> (including `node_modules`, so the station needs no internet to install).
+> This file is the technical reference.
+
 Tiny local service that gives the ERP's **Station** tab access to the hardware:
 reads the Mettler Toledo BC scale over serial and sends raw ZPL to the ZT411.
 Runs at `http://localhost:9410`. No cloud dependency — it works identically

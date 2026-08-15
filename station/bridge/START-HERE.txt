@@ -1,0 +1,147 @@
+====================================================================
+  CHAPEL FORD FARM - WEIGH & LABEL STATION SETUP
+====================================================================
+
+  This folder connects the scale and the ZT411 printer to the ERP.
+
+  Copy this whole folder onto the station PC first - for example to
+  C:\ChapelFordStation - then run the numbered files in order.
+  Do not run it from the flash drive.
+
+
+--------------------------------------------------------------------
+  BEFORE YOU START - two things to look up
+--------------------------------------------------------------------
+
+  1. THE PRINTER'S IP ADDRESS
+     On the ZT411 front panel, print a network configuration label:
+        Menu  >  Connection  >  Print Network Info
+     Write down the IP ADDRESS, e.g. 192.168.1.50
+
+     Give the printer a fixed address in your router (a "DHCP
+     reservation") so it never changes. If it changes later, the
+     station stops printing until you update it here.
+
+  2. THE SCALE'S COM PORT
+     Plug the scale in, then on the PC press the Windows key, type
+        Device Manager
+     and open it. Expand "Ports (COM & LPT)". The scale shows up as
+     something like "USB Serial Port (COM3)". Write down the COMx.
+
+  You also need Node.js on this PC. If it is not installed, get the
+  LTS version from  https://nodejs.org  and install it with all the
+  default options. The scripts will tell you if it is missing.
+
+
+--------------------------------------------------------------------
+  SETUP - run these in order
+--------------------------------------------------------------------
+
+  1-configure.bat
+        Creates your settings file and opens it in Notepad.
+        Change only these two lines, then SAVE and close Notepad:
+
+            "port": "COM3"           <- the scale's COM port
+            "host": "192.168.1.50"   <- the printer's IP address
+
+        Keep the quotation marks and the commas exactly as they are.
+
+  2-start-station.bat
+        Starts the connection. A black window opens and stays open -
+        that is normal. LEAVE IT OPEN while the station is in use.
+        Closing the window stops the station.
+
+  3-run-at-startup.bat
+        Optional but recommended. Makes step 2 happen automatically
+        every time someone logs into this PC, so nobody has to
+        remember. Run it once.
+
+
+--------------------------------------------------------------------
+  CHECK THAT IT WORKS
+--------------------------------------------------------------------
+
+  With the black window open, run:
+
+  open-erp.bat
+        Opens the ERP in your browser. Click the STATION tab.
+
+  Look at the four dots along the top:
+
+        Bridge    green = this folder is running
+        Scale     green = the scale is connected and reading
+        Printer   green = the ZT411 is reachable
+        Cloud     green = the internet connection is working
+
+  Put something on the scale. The big number should move, and show
+  STABLE when it settles. Press PRINT LABEL and a label comes out.
+
+  All four green means you are done.
+
+
+--------------------------------------------------------------------
+  IF A DOT IS RED
+--------------------------------------------------------------------
+
+  BRIDGE red
+        The black window is not running. Run 2-start-station.bat.
+
+  SCALE red
+        - Wrong COM port. Check Device Manager again and fix
+          "port" in step 1.
+        - Another program has the port open. Close any old scale
+          or labelling software, then restart step 2.
+
+  PRINTER red
+        - Wrong IP address, or the printer moved to a new one.
+          Print the network label again and fix "host" in step 1.
+        - Printer is asleep, off, or unplugged from the network.
+
+  CLOUD red
+        Internet is down. KEEP WORKING - the station still prints
+        labels and remembers everything. It uploads by itself when
+        the connection comes back. You will see a note on screen
+        saying how many labels are waiting to upload.
+
+  NOTHING PRINTS BUT ALL DOTS ARE GREEN
+        Check the printer has labels and ribbon, and that the media
+        settings are right for 4 inch stock.
+
+
+--------------------------------------------------------------------
+  TESTING WITHOUT THE HARDWARE
+--------------------------------------------------------------------
+
+  test-without-hardware.bat
+        Runs a pretend scale and a pretend printer, so you can try
+        the screens on any PC before the real equipment is hooked
+        up. Nothing is sent to a real printer. Labels created this
+        way are real records in the ERP, so void them afterwards
+        from the Scan-in screen.
+
+
+--------------------------------------------------------------------
+  DAY TO DAY
+--------------------------------------------------------------------
+
+  - Pick the product and set the LOT (pack date + batch number) at
+    the start of each run. Bump the batch number when you start a
+    new batch on the same day.
+  - Weigh and print one label per PACK.
+  - When a box is full, press CLOSE CASE. That groups the packs and
+    prints the case label for the box. Closing a case needs the
+    internet; if the Cloud dot is red, close it later.
+  - Printed labels are not inventory yet. They must be scanned on
+    the SCAN IN screen before they can be sold.
+  - Misprints: do not scan them in. Void them from the Station or
+    Scan-in screen so they never count as stock.
+
+
+--------------------------------------------------------------------
+  QUESTIONS
+--------------------------------------------------------------------
+
+  Leave the black window open and take a photo of it along with the
+  Station screen - that shows what failed and why.
+
+====================================================================
