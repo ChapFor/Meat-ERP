@@ -21,10 +21,11 @@ export default function ScanIn() {
     if (!scan.trim()) return;
     try {
       const c = await api.post('/api/scan/in', { barcode: scan });
+      const what = c.pack_count ? `CASE — ${c.pack_count} packs · ` : '';
       setStamp({
         kind: c.warning ? 'warn' : 'ok',
         title: c.warning ? 'ALREADY IN STOCK' : 'IN STOCK',
-        detail: `${c.product_name} · ${c.net_weight_lb} lb · lot ${c.lot_code} · ${c.serial}`,
+        detail: `${what}${c.product_name} · ${c.net_weight_lb} lb · lot ${c.lot_code} · ${c.serial}`,
       });
       refresh();
     } catch (err) {
@@ -35,14 +36,14 @@ export default function ScanIn() {
   };
 
   const voidCase = async (id) => {
-    if (!confirm('Void this case? It will not count as inventory.')) return;
+    if (!confirm('Void this label? It will not count as inventory.')) return;
     await api.post(`/api/cases/${id}/void`, { reason: 'misprint' });
     refresh();
   };
 
   return (
     <>
-      <div className="eyebrow">Scan a case label to commit it to inventory</div>
+      <div className="eyebrow">Scan a pack or case label to commit it to inventory</div>
       <form onSubmit={submit}>
         <input ref={inputRef} className="scanbox" value={scan} placeholder="Scan barcode…"
           onChange={(e) => setScan(e.target.value)} autoComplete="off" />
@@ -55,7 +56,8 @@ export default function ScanIn() {
           <table><tbody>
             {pending.map((c) => (
               <tr key={c.id}>
-                <td>{c.product_name}</td>
+                <td>{c.product_name}
+                  {c.pack_count > 0 && <span className="custmeta"> · case of {c.pack_count}</span>}</td>
                 <td className="num">{c.net_weight_lb} lb</td>
                 <td><span className="serial">{c.serial}</span></td>
                 <td><button className="btn danger" style={{ minHeight: 36, padding: '6px 12px' }}

@@ -50,7 +50,7 @@ export default function Items() {
   };
 
   const setActive = async (p, active) => {
-    if (!active && !confirm(`Deactivate ${p.name}? It drops off the label station and order entry. Existing cases keep their history.`)) return;
+    if (!active && !confirm(`Deactivate ${p.name}? It drops off the label station and order entry. Existing packs and cases keep their history.`)) return;
     try { await api.patch(`/api/products/${p.id}`, { active }); await refresh(); }
     catch (err) { setStamp({ kind: 'bad', title: 'NOT SAVED', detail: err.message }); }
   };
@@ -108,7 +108,7 @@ export default function Items() {
         {shown.length === 0 ? <div className="empty">No items. Add one so the label station can print it.</div> : (
           <table>
             <thead><tr>
-              <th>Code</th><th>Name</th><th>Unit</th><th className="num">Cases</th><th></th>
+              <th>Code</th><th>Name</th><th>Unit</th><th className="num">Packs</th><th></th>
             </tr></thead>
             <tbody>
               {shown.map((p) => editing === p.id ? (
@@ -118,7 +118,7 @@ export default function Items() {
                   <td><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></td>
                   <td><select value={edit.unit} onChange={(e) => setEdit({ ...edit, unit: e.target.value })}>
                     {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select></td>
-                  <td className="num">{p.case_count}</td>
+                  <td className="num">{p.pack_count}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn mini" onClick={() => saveEdit(p.id)} disabled={saving}>Save</button>{' '}
                     <button className="btn secondary mini" onClick={() => setEditing(null)}>Cancel</button>
@@ -129,7 +129,7 @@ export default function Items() {
                   <td><span className="serial">{p.code}</span></td>
                   <td>{p.name}{!p.active && <span className="chip VOID" style={{ marginLeft: 8 }}>INACTIVE</span>}</td>
                   <td>{p.unit}</td>
-                  <td className="num">{p.case_count}</td>
+                  <td className="num">{p.pack_count}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn secondary mini" onClick={() => {
                       setEdit({ code: p.code, name: p.name, unit: p.unit }); setEditing(p.id); setStamp(null);

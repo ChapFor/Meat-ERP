@@ -189,7 +189,7 @@ export default function Customers() {
                     <table>
                       <thead><tr>
                         <th>Order</th><th>Ordered</th><th>Ship</th>
-                        <th className="num">Cases</th><th className="num">lb</th><th>Status</th>
+                        <th className="num">Packs</th><th className="num">lb</th><th>Status</th>
                       </tr></thead>
                       <tbody>
                         {history[c.id].map((o) => (

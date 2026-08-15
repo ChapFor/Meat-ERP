@@ -37,6 +37,11 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
   (`NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)`), or shipped
   weight doubles. This applies to inventory, order lines, and customer history —
   the packs carry the catch weights that drive invoicing, the box does not.
+- **Vocabulary is packs and cases**, and the API says so: `packs_in_stock` /
+  `packs_allocated` / `packs_pending` and `pack_count` are leaf counts, while
+  `cases_in_stock` counts containers that are still intact (nothing picked out).
+  `order_lines.qty_cases` is the exception — it is counted in **packs** and the
+  UI labels it "Packs"; the column keeps its old name to avoid a rename migration.
 - Lot = per batch within a day. Lot code format: `YYMMDD-B{n}` (e.g. `260812-B2`).
 - Barcodes are GS1-128, internal-use only (no customer scanning). AIs:
   `(3202)` net wt lb, 6 digits, 2 implied decimals · `(91)` internal item code

@@ -20,10 +20,13 @@ export default function Packing() {
     if (!scan.trim() || !order) return;
     try {
       const res = await api.post('/api/scan/pack', { barcode: scan, order_id: order.id });
+      const what = res.is_case
+        ? `CASE — ${res.packs_allocated} pack${res.packs_allocated === 1 ? '' : 's'}`
+        : '1 pack';
       setStamp({
         kind: res.warning ? 'warn' : 'ok',
         title: res.warning ? 'PACKED — OVER QTY' : 'PACKED',
-        detail: `${res.case.product_name} · ${res.case.net_weight_lb} lb · ${res.case.serial}${res.warning ? ' — ' + res.warning : ''}`,
+        detail: `${what} · ${res.case.product_name} · ${res.case.net_weight_lb} lb · ${res.case.serial}${res.warning ? ' — ' + res.warning : ''}`,
       });
       refresh();
     } catch (err) {
@@ -34,7 +37,7 @@ export default function Packing() {
   };
 
   const undo = async () => {
-    const code = prompt('Scan or type the case barcode to un-pack:');
+    const code = prompt('Scan or type the pack or case barcode to un-pack:');
     if (!code) return;
     try { await api.post('/api/scan/unpack', { barcode: code }); refresh(); }
     catch (err) { setStamp({ kind: 'bad', title: 'UNDO FAILED', detail: err.message }); }
@@ -62,7 +65,7 @@ export default function Packing() {
       {order && (
         <>
           <form onSubmit={submit}>
-            <input ref={inputRef} className="scanbox" value={scan} placeholder="Scan case…"
+            <input ref={inputRef} className="scanbox" value={scan} placeholder="Scan pack or case…"
               onChange={(e) => setScan(e.target.value)} autoComplete="off" />
           </form>
           {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
@@ -76,7 +79,7 @@ export default function Packing() {
                   <tr key={l.id}>
                     <td>{l.product_name}</td>
                     <td className="num">
-                      {l.qty_cases ? `${l.packed_cases}/${l.qty_cases} cs` : `${Number(l.packed_lb).toFixed(1)}/${Number(l.qty_lb).toFixed(1)} lb`}
+                      {l.qty_cases ? `${l.packed_cases}/${l.qty_cases} packs` : `${Number(l.packed_lb).toFixed(1)}/${Number(l.qty_lb).toFixed(1)} lb`}
                     </td>
                     <td>{done ? <span className="chip IN_STOCK">DONE</span> : <span className="chip PENDING">OPEN</span>}</td>
                   </tr>
@@ -85,7 +88,7 @@ export default function Packing() {
             </tbody></table>
           </div>
           <div className="row">
-            <button className="btn secondary" onClick={undo}>Un-pack a case</button>
+            <button className="btn secondary" onClick={undo}>Un-pack</button>
             <button className="btn" onClick={markPacked}>Mark order packed</button>
           </div>
         </>

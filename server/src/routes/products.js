@@ -13,7 +13,8 @@ r.get('/', async (req, res, next) => {
   try {
     const { rows } = await q(
       `SELECT p.*,
-         (SELECT COUNT(*) FROM cases c WHERE c.product_id = p.id AND c.status <> 'VOID')::int AS case_count
+         (SELECT COUNT(*) FROM cases c WHERE c.product_id = p.id AND c.status <> 'VOID'
+            AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id))::int AS pack_count
        FROM products p
        WHERE ($1::bool IS TRUE OR p.active)
        ORDER BY p.name`, [req.query.all === '1']);

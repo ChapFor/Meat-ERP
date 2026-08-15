@@ -8,11 +8,16 @@ r.get('/inventory', async (_req, res, next) => {
   try {
     const { rows } = await q(
       `SELECT p.id, p.code, p.name,
-              COUNT(c.id) FILTER (WHERE c.status='IN_STOCK')  AS cases_in_stock,
+              COUNT(c.id) FILTER (WHERE c.status='IN_STOCK')  AS packs_in_stock,
               COALESCE(SUM(c.net_weight_lb) FILTER (WHERE c.status='IN_STOCK'),0) AS lb_in_stock,
-              COUNT(c.id) FILTER (WHERE c.status='ALLOCATED') AS cases_allocated,
-              COUNT(c.id) FILTER (WHERE c.status='PENDING')   AS cases_pending,
-              COUNT(*) FILTER (WHERE c.status='IN_STOCK' AND c.parent_id IS NOT NULL) AS loose_packs
+              COUNT(c.id) FILTER (WHERE c.status='ALLOCATED') AS packs_allocated,
+              COUNT(c.id) FILTER (WHERE c.status='PENDING')   AS packs_pending,
+              -- intact cases: containers still whole, nothing picked out of them
+              (SELECT COUNT(*) FROM cases b
+                 WHERE b.product_id = p.id AND b.status='IN_STOCK'
+                   AND EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = b.id)
+                   AND NOT EXISTS (SELECT 1 FROM cases ch
+                                   WHERE ch.parent_id = b.id AND ch.status <> 'IN_STOCK')) AS cases_in_stock
        FROM products p
        LEFT JOIN cases c ON c.product_id=p.id
          AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)

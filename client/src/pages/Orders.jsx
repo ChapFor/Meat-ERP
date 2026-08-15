@@ -85,7 +85,7 @@ export default function Orders({ go }) {
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
-              <div className="field"><label>Cases</label>
+              <div className="field"><label>Packs</label>
                 <input inputMode="numeric" value={l.qty_cases} onChange={(e) => setLine(i, 'qty_cases', e.target.value)} /></div>
               <div className="field"><label>Or lb</label>
                 <input inputMode="decimal" value={l.qty_lb} onChange={(e) => setLine(i, 'qty_lb', e.target.value)} /></div>
@@ -115,7 +115,7 @@ export default function Orders({ go }) {
               <tr key={l.id}>
                 <td>{l.product_name}</td>
                 <td className="num">
-                  {l.qty_cases ? `${l.packed_cases}/${l.qty_cases} cs` : `${Number(l.packed_lb).toFixed(1)}/${Number(l.qty_lb).toFixed(1)} lb`}
+                  {l.qty_cases ? `${l.packed_cases}/${l.qty_cases} packs` : `${Number(l.packed_lb).toFixed(1)}/${Number(l.qty_lb).toFixed(1)} lb`}
                 </td>
                 <td style={{ width: '40%' }}>
                   <div className="progress"><div style={{ width: `${Math.min(100,
