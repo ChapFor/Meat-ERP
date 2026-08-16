@@ -4,8 +4,12 @@
     "sim": false,
     "port": "COM3",
     "baud": 9600,
+    "dataBits": 8,
+    "parity": "none",
+    "stopBits": 1,
     "pollCmd": "W\r",
-    "pollMs": 250
+    "pollMs": 250,
+    "divisor": 100
   },
   "printer": {
     "sim": false,

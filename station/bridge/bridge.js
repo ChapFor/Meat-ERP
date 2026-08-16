@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseWeightLb } from './parse-weight.js';
 
 // --sim forces scale and printer simulation and falls back to the example
 // config, so the pack can be proven on a PC before any hardware is set up.
@@ -35,12 +36,25 @@ if (SIM) { config.scale.sim = true; config.printer.sim = true; }
 // readings works across NCI/Toledo/8217 protocol variants without parsing
 // status bytes.)
 const readings = [];
-let scaleConnected = false;
+let portOpen = false;          // the COM port opened
 let scaleError = null;
+let lastByteAt = 0;            // the scale is saying something
+let lastParseFail = null;      // ...but we could not read a weight out of it
 
 function pushReading(lb) {
   readings.push({ lb, at: Date.now() });
   if (readings.length > 12) readings.shift();
+}
+// "Connected" has to mean we are getting weights, not merely that the port
+// opened — an open port with unreadable framing would otherwise show green
+// while the weight sits at dashes.
+function scaleHealth() {
+  const fresh = readings.length && Date.now() - readings[readings.length - 1].at < 3000;
+  if (fresh) return { connected: true, error: null };
+  if (!portOpen) return { connected: false, error: scaleError || `${config.scale.port} is not open` };
+  if (lastByteAt && Date.now() - lastByteAt < 5000)
+    return { connected: false, error: `${config.scale.port} is sending data but no weight can be read from it — run diagnose-scale.bat${lastParseFail ? ` (last: ${JSON.stringify(lastParseFail.slice(0, 24))})` : ''}` };
+  return { connected: false, error: `${config.scale.port} is open but the scale is silent — check the cable, or run diagnose-scale.bat` };
 }
 function currentWeight() {
   const now = Date.now();
@@ -52,17 +66,7 @@ function currentWeight() {
   return { lb: last.lb, stable };
 }
 
-// Tolerant parse: pull the last "number + unit" out of whatever the scale sent.
-// NCI 'W' poll replies look like  \n  14.50LB\r\n<status>\r\x03  — variants differ
-// in padding/status, but the weight+unit token is common to all of them.
-function parseScaleChunk(buf) {
-  const matches = [...buf.matchAll(/(-?\d+\.\d+)\s*(lb|kg)/gi)];
-  if (!matches.length) return null;
-  const m = matches[matches.length - 1];
-  let lb = Number(m[1]);
-  if (m[2].toLowerCase() === 'kg') lb = lb * 2.20462;
-  return Math.round(lb * 100) / 100;
-}
+const parseScaleChunk = (buf) => parseWeightLb(buf, { divisor: config.scale.divisor });
 
 async function startScale() {
   if (config.scale.sim) return startScaleSim();
@@ -75,35 +79,48 @@ async function startScale() {
     return;
   }
   const open = () => {
+    // Framing matters: NCI/Toledo scales are often 7 data bits with even parity,
+    // and reading those as 8N1 yields bytes that parse as nothing.
     const sp = new SerialPort(
-      { path: config.scale.port, baudRate: config.scale.baud || 9600 },
+      {
+        path: config.scale.port,
+        baudRate: config.scale.baud || 9600,
+        dataBits: config.scale.dataBits ?? 8,
+        parity: config.scale.parity ?? 'none',
+        stopBits: config.scale.stopBits ?? 1,
+      },
       (err) => {
         if (err) {
           scaleError = err.message;
-          scaleConnected = false;
+          portOpen = false;
           setTimeout(open, 3000);
         }
       });
     let buf = '';
     let poller = null;
     sp.on('open', () => {
-      scaleConnected = true;
+      portOpen = true;
       scaleError = null;
-      console.log(`scale: open on ${config.scale.port}`);
-      poller = setInterval(() => sp.write(config.scale.pollCmd ?? 'W\r'),
-        config.scale.pollMs ?? 250);
+      console.log(`scale: open on ${config.scale.port} ` +
+        `(${config.scale.baud || 9600} ${config.scale.dataBits ?? 8}` +
+        `${String(config.scale.parity ?? 'none')[0].toUpperCase()}${config.scale.stopBits ?? 1})`);
+      // An empty pollCmd means the scale streams on its own; do not poll it.
+      const cmd = config.scale.pollCmd ?? 'W\r';
+      if (cmd) poller = setInterval(() => sp.write(cmd), config.scale.pollMs ?? 250);
     });
     sp.on('data', (d) => {
+      lastByteAt = Date.now();
       buf += d.toString('latin1');
       const lb = parseScaleChunk(buf);
-      if (lb !== null) pushReading(lb);
+      if (lb !== null) { pushReading(lb); lastParseFail = null; }
+      else lastParseFail = buf.slice(-40);
       if (buf.length > 512) buf = buf.slice(-128);
     });
     const down = (why) => {
       if (poller) clearInterval(poller);
       poller = null;
-      if (scaleConnected) console.error(`scale: down (${why}), retrying`);
-      scaleConnected = false;
+      if (portOpen) console.error(`scale: down (${why}), retrying`);
+      portOpen = false;
       setTimeout(open, 3000);
     };
     sp.on('error', (e) => { scaleError = e.message; down(e.message); sp.close(() => {}); });
@@ -114,7 +131,7 @@ async function startScale() {
 
 // Sim: empty → ramp to a random case weight → hold → empty. For dev/testing.
 function startScaleSim() {
-  scaleConnected = true;
+  portOpen = true;
   let phase = 0, target = 0, lb = 0;
   setInterval(() => {
     phase += 0.25;
@@ -244,12 +261,17 @@ const server = http.createServer((req, res) => {
   };
 
   if (req.method === 'GET' && req.url === '/weight') {
-    return send(200, { ...currentWeight(), scaleConnected, sim: !!config.scale.sim });
+    const h = scaleHealth();
+    return send(200, {
+      ...currentWeight(), scaleConnected: h.connected, scaleError: h.error,
+      sim: !!config.scale.sim,
+    });
   }
   if (req.method === 'GET' && req.url === '/health') {
+    const sh = scaleHealth();
     return checkPrinter((printerOk, printerError) => send(200, {
       ok: true,
-      scale: { connected: scaleConnected, sim: !!config.scale.sim, error: scaleError },
+      scale: { connected: sh.connected, sim: !!config.scale.sim, error: sh.error },
       printer: {
         reachable: printerOk, sim: !!config.printer.sim, mode: mode(),
         name: config.printer.name || null, host: config.printer.host || null,

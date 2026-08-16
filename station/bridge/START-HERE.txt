@@ -98,10 +98,22 @@
         The black window is not running. Run 2-start-station.bat.
 
   SCALE red
+        The Station screen says which of these it is.
         - Wrong COM port. Check Device Manager again and fix
           "port" in step 1.
         - Another program has the port open. Close any old scale
           or labelling software, then restart step 2.
+        - "sending data but no weight can be read from it" means the
+          cable and port are right but the scale is speaking a
+          different dialect. Close the station window and run
+          diagnose-scale.bat - it tries the common settings, tells
+          you which one the scale answers on, and prints the exact
+          lines to paste into your settings file.
+
+  WEIGHT STAYS AT ---- BUT THE SCALE DOT IS GREEN
+        Should not happen any more, but if it does, run
+        diagnose-scale.bat. It means we are receiving something
+        the software cannot read as a weight.
 
   PRINTER red
         The Station screen shows the reason next to the dot. Usually:
@@ -139,6 +151,13 @@
         up. Nothing is sent to a real printer. Labels created this
         way are real records in the ERP, so void them afterwards
         from the Scan-in screen.
+
+  diagnose-scale.bat
+        Run this whenever the weight will not appear. Stop the
+        station first so the port is free, leave something heavy on
+        the scale, then run it. It lists the serial ports, tries the
+        common speeds and settings, shows exactly what the scale
+        sends back, and prints the settings to use.
 
 
 --------------------------------------------------------------------
