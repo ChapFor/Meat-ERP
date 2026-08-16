@@ -9,8 +9,12 @@ Browser (Station tab, served from the cloud)
   ├─ https → ERP API          POST /api/cases, /api/lots  (case records)
   └─ http://localhost:9410 → bridge
        ├─ serial → Mettler Toledo BC scale   (live weight, polled)
-       └─ tcp 9100 → Zebra ZT411             (raw ZPL)
+       └─ USB → Zebra ZT411                  (raw ZPL via the Windows spooler)
 ```
+
+The ZT411 is USB-attached, so ZPL is handed to the Windows print spooler with the
+RAW datatype rather than opened as a socket. Set `printer.mode` to `network` and
+fill in `printer.host` if it is ever moved onto the network instead.
 
 ## Packs and cases
 A pack and a case carry the same kind of label. The station prints one per pack

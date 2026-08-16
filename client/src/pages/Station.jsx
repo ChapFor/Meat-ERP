@@ -231,14 +231,26 @@ export default function Station() {
       <div className="row statusrow">
         <span className="statuschip">{dot(bridgeOk)} Bridge</span>
         <span className="statuschip">{dot(scaleUp)} Scale{wt.sim ? ' (sim)' : ''}</span>
-        <span className="statuschip">{dot(health?.printer?.reachable)} Printer{health?.printer?.sim ? ' (sim)' : ''}</span>
+        <span className="statuschip" title={health?.printer?.name || health?.printer?.host || ''}>
+          {dot(health?.printer?.reachable)} Printer{health?.printer?.sim ? ' (sim)' : ''}
+        </span>
         <span className="statuschip">{dot(cloudOk)} Cloud</span>
         {queued > 0 && <span className="chip PENDING">{queued} upload{queued > 1 ? 's' : ''} queued</span>}
       </div>
       {bridgeOk === false && (
         <div className="stamp warn">BRIDGE NOT RUNNING
-          <small>Start the station bridge on this PC ({bridgeUrl()}) — see station/bridge/. Manual weight entry still works.</small>
+          <small>Start the station bridge on this PC ({bridgeUrl()}) — run 2-start-station.bat. Manual weight entry still works.</small>
         </div>
+      )}
+      {bridgeOk && health?.printer && !health.printer.reachable && (
+        <div className="stamp warn">PRINTER NOT READY
+          <small>{health.printer.error || 'the printer is not responding'}
+            {health.printer.mode === 'usb' && health.printer.name ? ` · looking for "${health.printer.name}"` : ''}
+          </small>
+        </div>
+      )}
+      {bridgeOk && scaleUp === false && health?.scale?.error && (
+        <div className="stamp warn">SCALE NOT READY<small>{health.scale.error}</small></div>
       )}
 
       <div className="panel">

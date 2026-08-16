@@ -9,6 +9,8 @@
   },
   "printer": {
     "sim": false,
+    "mode": "usb",
+    "name": "ZDesigner ZT411-203dpi ZPL",
     "host": "192.168.1.50",
     "port": 9100
   }

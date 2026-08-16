@@ -8,19 +8,28 @@
   C:\ChapelFordStation - then run the numbered files in order.
   Do not run it from the flash drive.
 
+  The ZT411 connects by USB. The scale connects by serial cable.
+
 
 --------------------------------------------------------------------
   BEFORE YOU START - two things to look up
 --------------------------------------------------------------------
 
-  1. THE PRINTER'S IP ADDRESS
-     On the ZT411 front panel, print a network configuration label:
-        Menu  >  Connection  >  Print Network Info
-     Write down the IP ADDRESS, e.g. 192.168.1.50
+  1. THE PRINTER'S WINDOWS NAME
+     The ZT411 is connected by USB, so Windows sees it as an ordinary
+     printer and we send labels to it by name.
 
-     Give the printer a fixed address in your router (a "DHCP
-     reservation") so it never changes. If it changes later, the
-     station stops printing until you update it here.
+     First make sure it is installed: plug the USB cable in, turn the
+     printer on, and let Windows finish. If it does not appear, install
+     Zebra's driver - search for "Zebra ZDesigner driver" - and pick
+     the ZT411 with ZPL in the model list. Do NOT choose an EPL model.
+
+     Then run   list-printers.bat   and write down the Zebra's name
+     exactly as shown, for example:
+
+        ZDesigner ZT411-203dpi ZPL
+
+     Spaces, dashes and capitals all matter. Copy it exactly.
 
   2. THE SCALE'S COM PORT
      Plug the scale in, then on the PC press the Windows key, type
@@ -41,10 +50,12 @@
         Creates your settings file and opens it in Notepad.
         Change only these two lines, then SAVE and close Notepad:
 
-            "port": "COM3"           <- the scale's COM port
-            "host": "192.168.1.50"   <- the printer's IP address
+            "port": "COM3"      <- the scale's COM port
+            "name": "..."       <- the Zebra's Windows name
 
         Keep the quotation marks and the commas exactly as they are.
+        Leave "mode": "usb" alone. The "host" line further down is
+        only used if the printer is ever moved onto the network.
 
   2-start-station.bat
         Starts the connection. A black window opens and stays open -
@@ -93,9 +104,13 @@
           or labelling software, then restart step 2.
 
   PRINTER red
-        - Wrong IP address, or the printer moved to a new one.
-          Print the network label again and fix "host" in step 1.
-        - Printer is asleep, off, or unplugged from the network.
+        The Station screen shows the reason next to the dot. Usually:
+        - The name in your settings does not match. Run
+          list-printers.bat and copy the name again, exactly.
+        - Printer is off, asleep, or the USB cable is unplugged.
+        - Windows has it paused or set to "Use Printer Offline".
+          Open Settings > Bluetooth & devices > Printers & scanners,
+          open the Zebra, and clear both.
 
   CLOUD red
         Internet is down. KEEP WORKING - the station still prints
@@ -106,6 +121,12 @@
   NOTHING PRINTS BUT ALL DOTS ARE GREEN
         Check the printer has labels and ribbon, and that the media
         settings are right for 4 inch stock.
+
+  LABELS COME OUT AS PAGES OF TEXT
+        The wrong driver is installed - Windows is printing the label
+        instructions instead of sending them to the printer. Remove
+        the printer and reinstall it with a ZDesigner ZT411 **ZPL**
+        driver, then run list-printers.bat and update the name.
 
 
 --------------------------------------------------------------------

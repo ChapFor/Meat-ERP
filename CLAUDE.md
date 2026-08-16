@@ -11,9 +11,16 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
 - `client/` — React + Vite. Screens: Station, Scan-in, Inventory, Orders, Packing,
   Customers, Items.
 - `station/bridge/` — local Node service on the station PC. The browser can't open
-  a COM port or a raw socket, so the bridge does both: polls the Mettler Toledo BC
-  scale over serial and sends ZPL to the Zebra ZT411 on tcp/9100. The Station
-  screen talks to it at `http://localhost:9410`.
+  a COM port, a printer queue or a raw socket, so the bridge does all of it: polls
+  the Mettler Toledo BC scale over serial and sends ZPL to the Zebra ZT411. The
+  Station screen talks to it at `http://localhost:9410`.
+- **The ZT411 is on USB.** ZPL goes through the Windows spooler with the RAW
+  datatype (`print-raw.ps1` P/Invokes `winspool`, run via `-EncodedCommand` so the
+  execution policy never applies) — that keeps the driver from rendering ZPL as
+  text, and avoids a native npm module on the station. `printer.mode` in
+  `config.json` switches between `usb` (needs `printer.name`, the exact Windows
+  printer name) and `network` (tcp/9100, `printer.host`). The driver must be a
+  ZPL ZDesigner one; an EPL driver prints pages of text.
 - Deployed on Railway: GitHub push → auto-deploy. Root `package.json` builds client
   then installs server; server serves everything on one service.
 

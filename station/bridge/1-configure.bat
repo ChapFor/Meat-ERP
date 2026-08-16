@@ -22,10 +22,14 @@ echo   Settings file already exists - opening it to edit.
 echo.
 echo   Notepad is about to open. Change these two lines only:
 echo.
-echo       "port": "COM3"           the scale's COM port
-echo       "host": "192.168.1.50"   the ZT411 printer's IP address
+echo       "port": "COM3"     the scale's COM port
+echo       "name": "..."      the Zebra's Windows printer name
+echo.
+echo   Not sure of the printer name? Close Notepad when it opens,
+echo   run list-printers.bat, then run this file again.
 echo.
 echo   Keep the quotes and commas exactly as they are.
+echo   Leave "mode": "usb" alone.
 echo   SAVE the file and close Notepad when you are done.
 echo.
 pause

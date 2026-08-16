@@ -9,7 +9,9 @@
 import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // --sim forces scale and printer simulation and falls back to the example
@@ -126,35 +128,100 @@ function startScaleSim() {
 }
 
 // ---------------- printer ----------------
+// Two ways to reach a ZT411:
+//   usb     — through the Windows spooler with the RAW datatype, so the driver
+//             passes ZPL to the printer instead of rendering it as text.
+//             Done by running print-raw.ps1, which P/Invokes winspool; that
+//             avoids a native npm module and any build tools on the station.
+//   network — a raw socket to tcp/9100.
+const mode = () => (config.printer.sim ? 'sim' : (config.printer.mode || 'usb'));
+const psExe = process.env.SystemRoot
+  ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  : 'powershell.exe';
+const rawPrintPs = path.join(dir, 'print-raw.ps1');
+
+// -EncodedCommand runs the script inline, so the execution policy never applies
+function runPs(script, vars, cb) {
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  execFile(psExe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+    { env: { ...process.env, ...vars }, timeout: 20000, windowsHide: true },
+    (err, stdout, stderr) => cb(err, String(stdout).trim(), String(stderr).trim()));
+}
+
+const PRINTER_STATUS_PS = `
+$ErrorActionPreference = 'Stop'
+$n = $env:CF_PRINTER
+$p = Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq $n }
+if (-not $p) { Write-Output 'NOTFOUND'; exit 1 }
+if ($p.WorkOffline) { Write-Output 'OFFLINE'; exit 1 }
+Write-Output 'OK'`;
+
+const LIST_PRINTERS_PS =
+  `Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name`;
+
 function printZpl(zpl, cb) {
   if (config.printer.sim) {
     console.log('printer: SIMULATED —\n' + zpl);
     return cb(null);
   }
-  const sock = net.createConnection({
-    host: config.printer.host,
-    port: config.printer.port || 9100,
-    timeout: 4000,
+  if (mode() === 'network') {
+    const sock = net.createConnection({
+      host: config.printer.host, port: config.printer.port || 9100, timeout: 4000,
+    });
+    let done = false;
+    const finish = (err) => { if (!done) { done = true; sock.destroy(); cb(err); } };
+    sock.on('connect', () => sock.end(zpl, () => finish(null)));
+    sock.on('timeout', () => finish(new Error('printer connection timed out')));
+    sock.on('error', (e) => finish(e));
+    return;
+  }
+  // usb: hand the bytes to the spooler as RAW. ^CI28 declares UTF-8, so the
+  // file is written UTF-8 and sent through byte for byte.
+  if (!config.printer.name)
+    return cb(new Error('no printer name set — run 1-configure.bat and set "name"'));
+  const tmp = path.join(os.tmpdir(), `cf-label-${process.pid}-${Date.now()}.zpl`);
+  try { fs.writeFileSync(tmp, zpl, 'utf8'); }
+  catch (e) { return cb(new Error(`cannot write temp file: ${e.message}`)); }
+  const script = fs.readFileSync(rawPrintPs, 'utf8');
+  runPs(script, { CF_PRINTER: config.printer.name, CF_ZPL_FILE: tmp }, (err, out) => {
+    fs.unlink(tmp, () => {});
+    if (out.startsWith('ERR ')) return cb(new Error(out.slice(4)));
+    if (err) return cb(new Error(out || err.message));
+    cb(null);
   });
-  let done = false;
-  const finish = (err) => { if (!done) { done = true; sock.destroy(); cb(err); } };
-  sock.on('connect', () => sock.end(zpl, () => finish(null)));
-  sock.on('timeout', () => finish(new Error('printer connection timed out')));
-  sock.on('error', (e) => finish(e));
 }
 
+// Spawning PowerShell on every health poll would be wasteful, so cache briefly.
+let printerCache = { at: 0, ok: false, error: null };
 function checkPrinter(cb) {
-  if (config.printer.sim) return cb(true);
-  const sock = net.createConnection({
-    host: config.printer.host,
-    port: config.printer.port || 9100,
-    timeout: 2000,
+  if (config.printer.sim) return cb(true, null);
+  if (mode() === 'network') {
+    const sock = net.createConnection({
+      host: config.printer.host, port: config.printer.port || 9100, timeout: 2000,
+    });
+    let done = false;
+    const finish = (ok, err) => { if (!done) { done = true; sock.destroy(); cb(ok, err); } };
+    sock.on('connect', () => finish(true, null));
+    sock.on('timeout', () => finish(false, 'no answer on port 9100'));
+    sock.on('error', (e) => finish(false, e.message));
+    return;
+  }
+  if (!config.printer.name) return cb(false, 'no printer name set in config.json');
+  if (Date.now() - printerCache.at < 10000) return cb(printerCache.ok, printerCache.error);
+  runPs(PRINTER_STATUS_PS, { CF_PRINTER: config.printer.name }, (err, out) => {
+    let ok = false, error = null;
+    if (out === 'OK') ok = true;
+    else if (out === 'NOTFOUND') error = `no Windows printer named "${config.printer.name}" — run list-printers.bat`;
+    else if (out === 'OFFLINE') error = 'printer is offline — check power and the USB cable';
+    else error = 'could not read printer status';
+    printerCache = { at: Date.now(), ok, error };
+    cb(ok, error);
   });
-  let done = false;
-  const finish = (ok) => { if (!done) { done = true; sock.destroy(); cb(ok); } };
-  sock.on('connect', () => finish(true));
-  sock.on('timeout', () => finish(false));
-  sock.on('error', () => finish(false));
+}
+
+function listPrinters(cb) {
+  runPs(LIST_PRINTERS_PS, {}, (err, out) =>
+    cb(err ? [] : out.split('\n').map((s) => s.trim()).filter(Boolean)));
 }
 
 // ---------------- http ----------------
@@ -180,11 +247,19 @@ const server = http.createServer((req, res) => {
     return send(200, { ...currentWeight(), scaleConnected, sim: !!config.scale.sim });
   }
   if (req.method === 'GET' && req.url === '/health') {
-    return checkPrinter((printerOk) => send(200, {
+    return checkPrinter((printerOk, printerError) => send(200, {
       ok: true,
       scale: { connected: scaleConnected, sim: !!config.scale.sim, error: scaleError },
-      printer: { reachable: printerOk, sim: !!config.printer.sim, host: config.printer.host },
+      printer: {
+        reachable: printerOk, sim: !!config.printer.sim, mode: mode(),
+        name: config.printer.name || null, host: config.printer.host || null,
+        error: printerError || null,
+      },
     }));
+  }
+  // lets the operator see the exact Windows printer name to paste into config
+  if (req.method === 'GET' && req.url === '/printers') {
+    return listPrinters((names) => send(200, { printers: names }));
   }
   if (req.method === 'POST' && req.url === '/print') {
     let body = '';
@@ -202,8 +277,13 @@ const server = http.createServer((req, res) => {
   send(404, { error: 'not found' });
 });
 
-server.listen(config.port || 9410, '127.0.0.1', () =>
-  console.log(`station bridge on http://localhost:${config.port || 9410}` +
-    ` (scale ${config.scale.sim ? 'sim' : config.scale.port},` +
-    ` printer ${config.printer.sim ? 'sim' : config.printer.host + ':' + (config.printer.port || 9100)})`));
+const printerLabel = () => config.printer.sim ? 'sim'
+  : mode() === 'network' ? `${config.printer.host}:${config.printer.port || 9100}`
+  : `USB "${config.printer.name || '(not set)'}"`;
+
+server.listen(config.port || 9410, '127.0.0.1', () => {
+  console.log(`station bridge on http://localhost:${config.port || 9410}`);
+  console.log(`  scale:   ${config.scale.sim ? 'sim' : config.scale.port}`);
+  console.log(`  printer: ${printerLabel()}`);
+});
 startScale();

@@ -21,9 +21,12 @@ when the internet is down.
      should be in a polled serial mode (NCI is the usual default: 9600 7E1,
      responds to `W`+CR). If yours is set to a different protocol, adjust
      `pollCmd`, or switch the scale to NCI.
-   - `printer.host` — the ZT411's IP address (print a network config label
-     from the printer menu to find it). Give the printer a DHCP reservation
-     in the router so the IP never moves.
+   - `printer.name` — the exact Windows name of the USB-attached ZT411
+     (`list-printers.bat`, or `Get-CimInstance Win32_Printer`). Must be a
+     **ZPL** ZDesigner driver; an EPL one prints the label source as text.
+     ZPL is sent through the spooler as RAW by `print-raw.ps1`.
+   - Network-attached instead? Set `printer.mode` to `network` and fill in
+     `printer.host` with the IP from the printer's network config label.
 5. `npm start` — you should see `scale: open on COM3` and the bridge URL.
 6. Open the ERP in Chrome → Station tab. Bridge / Scale / Printer dots go green.
 
@@ -48,6 +51,8 @@ Task Scheduler → Create Task:
   normally just means the process is down.
 - **Scale dot red**: wrong COM port, port in use by the old station app, or
   wrong protocol/baud. Close anything else that opens the COM port.
-- **Printer dot red**: wrong IP, printer asleep/off, or port 9100 disabled in
-  the printer's network settings.
+- **Printer dot red**: the Station screen shows the reason. Usually the name in
+  `config.json` does not match Windows exactly, the printer is off or unplugged,
+  or Windows has it paused / "Use Printer Offline". On `network` mode: wrong IP,
+  or port 9100 disabled in the printer's network settings.
 - No scale? The Station tab falls back to manual weight entry automatically.
