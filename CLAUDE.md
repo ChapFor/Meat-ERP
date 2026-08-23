@@ -76,6 +76,14 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
   the pre-2026-08 full encodings**, so labels already in the cooler still scan.
   It returns database-shaped values (full lot code, full serial) either way.
   Keep it that way.
+- **Scanners that drop FNC1.** Many keyboard-wedge scanners send nothing for
+  FNC1 unless configured to send ASCII GS, which runs the variable-length fields
+  together and makes `(91)` swallow the rest of the line. `parseScan` falls back
+  to anchored patterns that pull the compact and legacy forms apart, accepted
+  only when the recovered lot is a valid `YYMMDD-Bn`. Configuring the scanner is
+  still the right fix — an item code containing `10` could split wrong.
+  `POST /api/scan/debug` (Scanner test panel on Scan-in) shows the raw bytes,
+  whether GS arrived, and how it parsed, without touching any case.
 - Scan-in is self-healing: if the station upload never arrived, the barcode alone
   can recreate the case (see `POST /api/scan/in`).
 - Weights are lb throughout. Catch-weight business: invoicing will be driven by

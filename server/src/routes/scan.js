@@ -112,6 +112,31 @@ r.post('/pack', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Scanner diagnostic: shows exactly what arrived and how it parsed, without
+// touching any case. Used by the Scanner test panel on the Scan-in screen.
+r.post('/debug', (req, res) => {
+  const raw = String(req.body?.barcode ?? '');
+  const codes = [...raw].map((c) => c.charCodeAt(0));
+  const out = {
+    length: raw.length,
+    text: [...raw].map((c) => (c.charCodeAt(0) >= 32 && c.charCodeAt(0) < 127 ? c : '·')).join(''),
+    hex: codes.map((n) => n.toString(16).padStart(2, '0')).join(' '),
+    has_gs: codes.includes(29),
+    has_aim_prefix: raw.startsWith(']C1'),
+    parenthesized: raw.includes('('),
+  };
+  try {
+    out.parsed = parseScan(raw);
+    out.verdict = out.has_gs || out.parenthesized
+      ? 'reads correctly'
+      : 'reads, but the scanner is not sending FNC1 as ASCII GS — recovered by pattern instead';
+  } catch (e) {
+    out.error = e.message;
+    out.verdict = 'cannot be read';
+  }
+  res.json(out);
+});
+
 // undo a pack scan (wrong order, wrong case)
 r.post('/unpack', async (req, res, next) => {
   try {

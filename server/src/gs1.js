@@ -64,8 +64,37 @@ export function zplFieldData({ itemCode, weightLb, lotCode, serial }) {
     `>810${compactLot(lotCode)}>821${serialSuffix(serial, lotCode)}`;
 }
 
+// Plenty of keyboard-wedge scanners transmit nothing at all for FNC1 unless
+// they are configured to send ASCII GS. The variable-length fields then run
+// together and (91) swallows the rest of the line. Our element string is rigid
+// enough to pull apart anyway, so these anchored patterns recover it rather
+// than rejecting a label that scanned perfectly well.
+// Only used when the strict parse found no serial; configuring the scanner to
+// send GS is still the better fix, since an item code containing "10" could in
+// principle split in the wrong place here.
+const NO_SEPARATOR = [
+  // compact, current: (3202)wwwwww (91)item (10)YYMMDDb (21)suffix
+  { re: /^3202(\d{6})91([A-Za-z0-9-]+?)10(\d{7,8})21([A-Za-z0-9]{1,10})$/,
+    map: (m) => ({ '3202': m[1], '91': m[2], '10': m[3], '21': m[4] }) },
+  // legacy full form, with or without the leading (13) pack date
+  { re: /^(?:13\d{6})?3202(\d{6})91([A-Za-z0-9-]+?)10(\d{6}-B\d{1,2})21([A-Za-z0-9-]+)$/,
+    map: (m) => ({ '3202': m[1], '91': m[2], '10': m[3], '21': m[4] }) },
+];
+
+function recoverWithoutSeparators(s) {
+  for (const { re, map } of NO_SEPARATOR) {
+    const m = re.exec(s);
+    if (!m) continue;
+    const out = map(m);
+    // only trust it if the lot lands on a real lot code
+    if (/^\d{6}-B\d+$/.test(expandLot(out['10']) || '')) return out;
+  }
+  return null;
+}
+
 // Parse a scan from a keyboard-wedge scanner. Tolerates: AIM prefix ]C1,
-// ASCII GS (0x1D) separators, or parenthesized human-readable form.
+// ASCII GS (0x1D) separators, parenthesized human-readable form, and a scanner
+// that drops FNC1 entirely.
 // Returns database-shaped values (full lot code and full serial) whichever
 // encoding was scanned.
 export function parseScan(raw) {
@@ -73,7 +102,7 @@ export function parseScan(raw) {
   let s = String(raw).trim();
   if (s.startsWith(']C1')) s = s.slice(3);
 
-  const out = {};
+  let out = {};
   if (s.includes('(')) {
     // parenthesized form
     const re = /\((\d{2,4})\)([^(]*)/g;
@@ -100,6 +129,12 @@ export function parseScan(raw) {
         i = end === -1 ? s.length : end + 1;
       }
     }
+  }
+
+  // A scanner that dropped FNC1 leaves (91) holding everything after it.
+  if (!out['21'] && !s.includes('(')) {
+    const recovered = recoverWithoutSeparators(s.split(GS).join(''));
+    if (recovered) out = recovered;
   }
 
   const lotCode = expandLot(out['10'] || null);

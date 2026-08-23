@@ -35,6 +35,22 @@ export default function ScanIn() {
     inputRef.current?.focus();
   };
 
+  // Scanner test: shows exactly what the scanner sent and how it parsed,
+  // without creating or changing anything.
+  const [testing, setTesting] = useState(false);
+  const [testScan, setTestScan] = useState('');
+  const [testResult, setTestResult] = useState(null);
+  const testRef = useRef();
+
+  const runTest = async (e) => {
+    e.preventDefault();
+    if (!testScan) return;
+    try { setTestResult(await api.post('/api/scan/debug', { barcode: testScan })); }
+    catch (err) { setTestResult({ verdict: 'could not reach the server', error: err.message }); }
+    setTestScan('');
+    testRef.current?.focus();
+  };
+
   const voidCase = async (id) => {
     if (!confirm('Void this label? It will not count as inventory.')) return;
     await api.post(`/api/cases/${id}/void`, { reason: 'misprint' });
@@ -49,6 +65,45 @@ export default function ScanIn() {
           onChange={(e) => setScan(e.target.value)} autoComplete="off" />
       </form>
       {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
+
+      <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <button className="btn secondary mini" onClick={() => {
+          setTesting(!testing); setTestResult(null);
+          setTimeout(() => testRef.current?.focus(), 50);
+        }}>{testing ? 'Close scanner test' : 'Scanner test'}</button>
+      </div>
+
+      {testing && (
+        <div className="panel">
+          <div className="eyebrow" style={{ marginTop: 0 }}>Scanner test</div>
+          <div style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 8 }}>
+            Scan any label here. Nothing is created or changed — this only shows
+            what the scanner sent and whether it can be read.
+          </div>
+          <form onSubmit={runTest}>
+            <input ref={testRef} className="scanbox" value={testScan} placeholder="Scan a label…"
+              onChange={(e) => setTestScan(e.target.value)} autoComplete="off" />
+          </form>
+          {testResult && (
+            <table style={{ marginTop: 12 }}><tbody>
+              <tr><td className="lbl">Verdict</td><td><strong>{testResult.verdict}</strong>
+                {testResult.error && <div style={{ color: 'var(--bad)' }}>{testResult.error}</div>}</td></tr>
+              <tr><td className="lbl">Characters</td><td className="num">{testResult.length}</td></tr>
+              <tr><td className="lbl">Text</td><td><span className="serial">{testResult.text}</span></td></tr>
+              <tr><td className="lbl">Hex</td>
+                <td style={{ fontFamily: 'var(--mono)', fontSize: 12, wordBreak: 'break-all' }}>{testResult.hex}</td></tr>
+              <tr><td className="lbl">FNC1 as GS</td>
+                <td>{testResult.has_gs ? 'yes' : 'no — scanner is not sending it'}</td></tr>
+              {testResult.parsed && <>
+                <tr><td className="lbl">Item</td><td>{testResult.parsed.itemCode}</td></tr>
+                <tr><td className="lbl">Weight</td><td className="num">{testResult.parsed.weightLb} lb</td></tr>
+                <tr><td className="lbl">Lot</td><td>{testResult.parsed.lotCode}</td></tr>
+                <tr><td className="lbl">Serial</td><td><span className="serial">{testResult.parsed.serial}</span></td></tr>
+              </>}
+            </tbody></table>
+          )}
+        </div>
+      )}
 
       {pending.length > 0 && (
         <div className="panel">
