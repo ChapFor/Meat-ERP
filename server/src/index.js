@@ -10,6 +10,7 @@ import cases from './routes/cases.js';
 import orders from './routes/orders.js';
 import scan from './routes/scan.js';
 import reports from './routes/reports.js';
+import batches from './routes/batches.js';
 
 const app = express();
 const origins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
@@ -23,6 +24,7 @@ app.use('/api/cases', cases);
 app.use('/api/orders', orders);
 app.use('/api/scan', scan);
 app.use('/api/reports', reports);
+app.use('/api/batches', batches);
 
 // serve built client in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

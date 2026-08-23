@@ -8,8 +8,12 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
 
 ## Architecture
 - `server/` — Node/Express (ESM) + Postgres (`pg`). Serves `client/dist` in production.
-- `client/` — React + Vite. Screens: Station, Scan-in, Inventory, Orders, Packing,
-  Customers, Items.
+- `client/` — React + Vite. Two shells chosen by a header switch (`cf_shell`):
+  **plant** is the floor terminal (Station, Scan-in, Inventory, Packing — no
+  costing, no master data) and **admin** adds Batches, Orders, Customers, Items.
+  This is a display split, **not a security boundary** — there is no auth yet, so
+  the API still serves costs to anyone who asks. Revisit when the shared passcode
+  lands.
 - `station/bridge/` — local Node service on the station PC. The browser can't open
   a COM port, a printer queue or a raw socket, so the bridge does all of it: polls
   the Mettler Toledo BC scale over serial and sends ZPL to the Zebra ZT411. The
@@ -56,6 +60,25 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
   using it rather than re-deriving. `packed_lb` is always the real leaf weight
   whatever the unit, since that is what invoicing bills.
 - Lot = per batch within a day. Lot code format: `YYMMDD-B{n}` (e.g. `260812-B2`).
+- **Batches own lots.** `production_batches` (CUT | FORMULATE) holds one lot; the
+  station picks an OPEN batch and prints into that lot, so every case is
+  attributable to the run that made it. Inputs are scanned in (`batch_inputs`,
+  which marks the consumed case SHIPPED and sets `lots.parent_lot_id` for
+  traceability back to the carcass lot) or entered by hand. **Closing a batch
+  freezes its output**: `POST /api/cases` refuses a closed lot, because a final
+  yield somebody has costed must not move afterwards. Scan-in *self-heal* is
+  deliberately still allowed on a closed batch — a label printed before the
+  close is real product — and returns a warning saying the yield changed.
+- **Cost allocation is by relative market value, never by weight.** A pound of
+  breast carries more of the carcass cost than a pound of backs:
+  `share = (out_lb × products.market_value_per_lb) / Σ same`. Shares need only
+  prices; dollars also need `production_batches.input_cost`. If any output
+  product has no market value the report returns `allocatable:false` with the
+  offending names and every `allocated_cost` null — never a partial allocation
+  that silently loads all the cost onto the priced items.
+- Yield = output lb / input lb per product; the unaccounted line is
+  `input − Σ output` (bone, trim, drip, loss) and goes negative when the
+  declared carcass weight is wrong, which the report says out loud.
 - Barcodes are GS1-128, internal-use only (no customer scanning). AIs:
   `(3202)` net wt lb, 6 digits, 2 implied decimals · `(91)` internal item code
   (PLU — used instead of GTINs; the farm's 11-digit GS1 prefix only allows 10

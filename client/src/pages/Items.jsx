@@ -71,6 +71,9 @@ export default function Items() {
       <div className="eyebrow" style={{ marginTop: 4, letterSpacing: 0, textTransform: 'none', fontWeight: 400 }}>
         The item code is the PLU printed into the barcode as AI (91). Every item here
         appears in the label station's product list and on order entry.
+        <strong> $/lb</strong> is the market value used to allocate batch cost across
+        cut products — batch costing stays unallocated until every product in the
+        batch has one.
       </div>
 
       {adding && (
@@ -108,7 +111,8 @@ export default function Items() {
         {shown.length === 0 ? <div className="empty">No items. Add one so the label station can print it.</div> : (
           <table>
             <thead><tr>
-              <th>Code</th><th>Name</th><th>Unit</th><th className="num">Packs</th><th></th>
+              <th>Code</th><th>Name</th><th>Unit</th><th className="num">$/lb</th>
+              <th className="num">Packs</th><th></th>
             </tr></thead>
             <tbody>
               {shown.map((p) => editing === p.id ? (
@@ -118,6 +122,9 @@ export default function Items() {
                   <td><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></td>
                   <td><select value={edit.unit} onChange={(e) => setEdit({ ...edit, unit: e.target.value })}>
                     {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select></td>
+                  <td><input style={{ width: 70 }} inputMode="decimal" placeholder="—"
+                    value={edit.market_value_per_lb}
+                    onChange={(e) => setEdit({ ...edit, market_value_per_lb: e.target.value })} /></td>
                   <td className="num">{p.pack_count}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn mini" onClick={() => saveEdit(p.id)} disabled={saving}>Save</button>{' '}
@@ -129,10 +136,15 @@ export default function Items() {
                   <td><span className="serial">{p.code}</span></td>
                   <td>{p.name}{!p.active && <span className="chip VOID" style={{ marginLeft: 8 }}>INACTIVE</span>}</td>
                   <td>{p.unit}</td>
+                  <td className="num">{p.market_value_per_lb === null || p.market_value_per_lb === undefined
+                    ? <span style={{ color: 'var(--bad)' }}>not set</span>
+                    : `$${Number(p.market_value_per_lb).toFixed(2)}`}</td>
                   <td className="num">{p.pack_count}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn secondary mini" onClick={() => {
-                      setEdit({ code: p.code, name: p.name, unit: p.unit }); setEditing(p.id); setStamp(null);
+                      setEdit({ code: p.code, name: p.name, unit: p.unit,
+                        market_value_per_lb: p.market_value_per_lb ?? '' });
+                      setEditing(p.id); setStamp(null);
                     }}>Edit</button>{' '}
                     {p.active
                       ? <button className="btn danger mini" onClick={() => setActive(p, false)}>Deactivate</button>

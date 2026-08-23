@@ -45,7 +45,7 @@ r.post('/', async (req, res, next) => {
 
 r.patch('/:id', async (req, res, next) => {
   try {
-    const { name, unit, active, code } = req.body ?? {};
+    const { name, unit, active, code, market_value_per_lb } = req.body ?? {};
     if (code !== undefined) {
       const c = String(code).trim();
       if (!CODE_RE.test(c))
@@ -59,12 +59,19 @@ r.patch('/:id', async (req, res, next) => {
     if (name !== undefined && !String(name).trim())
       return res.status(400).json({ error: 'item name is required' });
 
+    // market value per lb is the basis for batch cost allocation; '' clears it
+    const mv = market_value_per_lb === undefined ? undefined
+      : (market_value_per_lb === '' || market_value_per_lb === null ? null : Number(market_value_per_lb));
+    if (mv !== undefined && mv !== null && !(Number.isFinite(mv) && mv >= 0))
+      return res.status(400).json({ error: 'market value per lb must be a positive number' });
+
     const { rows } = await q(
       `UPDATE products SET
          name = COALESCE($2,name), unit = COALESCE($3,unit),
-         active = COALESCE($4,active), code = COALESCE($5,code)
+         active = COALESCE($4,active), code = COALESCE($5,code),
+         market_value_per_lb = CASE WHEN $7::bool THEN $6::numeric ELSE market_value_per_lb END
        WHERE id=$1 RETURNING *`,
-      [req.params.id, name?.trim(), unit, active, code?.trim()]);
+      [req.params.id, name?.trim(), unit, active, code?.trim(), mv ?? null, mv !== undefined]);
     if (!rows[0]) return res.status(404).json({ error: 'item not found' });
     res.json(rows[0]);
   } catch (e) { next(e); }

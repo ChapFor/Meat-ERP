@@ -10,6 +10,7 @@ r.post('/in', async (req, res, next) => {
   try {
     const p = parseScan(req.body.barcode);
     let c = (await q('SELECT * FROM cases WHERE serial=$1', [p.serial])).rows[0];
+    let lateBatch = null;
 
     if (!c) {
       if (!p.itemCode || !p.lotCode || !p.weightLb)
@@ -28,6 +29,11 @@ r.post('/in', async (req, res, next) => {
         `INSERT INTO cases (serial, product_id, lot_id, net_weight_lb)
          VALUES ($1,$2,$3,$4) RETURNING *`,
         [p.serial, prod.id, lot.id, p.weightLb])).rows[0];
+      // Printing into a closed batch is blocked, but a label printed before the
+      // batch closed and only scanned afterwards is real product sitting on a
+      // cart. Admit it and say so, rather than stranding it.
+      lateBatch = (await q(
+        `SELECT id FROM production_batches WHERE lot_id=$1 AND status='CLOSED'`, [lot.id])).rows[0];
     }
 
     // A case label stands for everything in it: scanning the box scans in its packs.
@@ -47,7 +53,9 @@ r.post('/in', async (req, res, next) => {
          (SELECT COUNT(*) FROM cases ch WHERE ch.parent_id = c.id)::int AS pack_count
        FROM cases c JOIN products p ON p.id=c.product_id JOIN lots l ON l.id=c.lot_id
        WHERE c.id=$1`, [c.id])).rows[0];
-    res.json(full);
+    res.json(lateBatch
+      ? { ...full, warning: `added to lot ${full.lot_code} after batch ${lateBatch.id} was closed — its yield has changed` }
+      : full);
   } catch (e) { next(e); }
 });
 

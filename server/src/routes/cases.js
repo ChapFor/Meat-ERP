@@ -25,6 +25,15 @@ r.post('/', async (req, res, next) => {
         [lot_code, packDate, Number(b)])).rows[0];
     }
 
+    // A closed batch has a final yield. Letting more output land in its lot
+    // afterwards would silently change a number someone has already costed.
+    const closed = (await q(
+      `SELECT id FROM production_batches WHERE lot_id=$1 AND status='CLOSED'`, [lot.id])).rows[0];
+    if (closed)
+      return res.status(409).json({
+        error: `batch ${closed.id} for lot ${lot.lot_code} is closed — reopen it to add more output`,
+      });
+
     let sn = serial;
     if (!sn) {
       const { rows } = await q(

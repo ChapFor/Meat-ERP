@@ -20,8 +20,10 @@ export default function Station() {
   const [products, setProducts] = useState(() => JSON.parse(localStorage.getItem('cf_products_cache') || '[]'));
   const [itemCode, setItemCode] = useState(localStorage.getItem('cf_station_item') || '');
   const [lot, setLot] = useState(() => JSON.parse(localStorage.getItem('cf_station_lot') || 'null'));
-  const [packDate, setPackDate] = useState(todayISO());
-  const [batchNo, setBatchNo] = useState('1');
+  // Batches are opened in the office; the station picks one and prints into its
+  // lot. Cached so an offline run can still select the batch it was working on.
+  const [batches, setBatches] = useState(() => JSON.parse(localStorage.getItem('cf_batches_cache') || '[]'));
+  const [batchId, setBatchId] = useState(() => localStorage.getItem('cf_station_batch') || '');
   const [stationId] = useState(() => localStorage.getItem('cf_station_id') || 'S1');
 
   const [wt, setWt] = useState({ lb: null, stable: false, scaleConnected: false });
@@ -40,13 +42,39 @@ export default function Station() {
   const printingRef = useRef(false);
   const product = products.find((p) => p.code === itemCode);
 
-  // stale-lot guard: a lot from a previous day never carries over
+  // Open batches drive the lot now. Selecting one sets the lot the station
+  // prints into; if the cloud is down the cached list still lets a run continue.
+  const loadBatches = async () => {
+    const bs = await api.get('/api/batches?status=OPEN');
+    setBatches(bs);
+    localStorage.setItem('cf_batches_cache', JSON.stringify(bs));
+    return bs;
+  };
   useEffect(() => {
-    // pack_date may be a full ISO timestamp when the lot came from the API
-    if (lot && String(lot.pack_date).slice(0, 10) !== todayISO()) {
-      setLot(null); localStorage.removeItem('cf_station_lot');
-    }
+    loadBatches().catch(() => setCloudOk(false));
+    const t = setInterval(() => loadBatches().catch(() => {}), 20000);
+    return () => clearInterval(t);
   }, []);
+
+  const batch = batches.find((b) => String(b.id) === String(batchId));
+  // the lot comes from the selected batch; keep the old shape the label needs
+  useEffect(() => {
+    if (!batch) return;
+    const l = { id: batch.lot_id, lot_code: batch.lot_code, pack_date: batch.pack_date };
+    setLot(l);
+    localStorage.setItem('cf_station_lot', JSON.stringify(l));
+  }, [batchId, batches.length]);
+
+  // a batch that closed while the station sat idle must not keep printing
+  useEffect(() => {
+    if (batchId && batches.length && !batch) {
+      setBatchId(''); setLot(null);
+      localStorage.removeItem('cf_station_batch');
+      localStorage.removeItem('cf_station_lot');
+      setStamp({ kind: 'warn', title: 'BATCH CLOSED',
+        detail: 'That batch is no longer open. Pick another one before printing.' });
+    }
+  }, [batches]);
 
   // Products come from the cloud; the cache keeps the dropdown usable offline.
   const loadProducts = async () => {
@@ -95,24 +123,15 @@ export default function Station() {
     return () => { alive = false; clearInterval(wtTimer); clearInterval(healthTimer); clearInterval(flushTimer); };
   }, []);
 
-  const setLotFromForm = async () => {
-    const code = packDate.slice(2).replaceAll('-', '') + '-B' + batchNo;
-    try {
-      const l = await api.post('/api/lots', { pack_date: packDate, batch_no: Number(batchNo) });
-      setLot(l); localStorage.setItem('cf_station_lot', JSON.stringify(l));
-      setCloudOk(true);
-    } catch (err) {
-      if (!cloudDown(err)) return setStamp({ kind: 'bad', title: 'LOT REJECTED', detail: err.message });
-      // offline: build the lot locally; the server self-heals it on first upload/scan
-      const l = { lot_code: code, pack_date: packDate, batch_no: Number(batchNo), local: true };
-      setLot(l); localStorage.setItem('cf_station_lot', JSON.stringify(l));
-      setCloudOk(false);
-    }
+  const pickBatch = (id) => {
+    setBatchId(id); setStamp(null);
+    if (id) localStorage.setItem('cf_station_batch', id);
+    else { localStorage.removeItem('cf_station_batch'); setLot(null); localStorage.removeItem('cf_station_lot'); }
   };
 
   const doPrint = async (weightLb) => {
     if (printingRef.current) return;
-    if (!product || !lot) return setStamp({ kind: 'bad', title: 'NOT READY', detail: 'Pick a product and set the lot first.' });
+    if (!product || !lot) return setStamp({ kind: 'bad', title: 'NOT READY', detail: 'Pick a product and a batch first.' });
     if (!weightLb || weightLb <= 0) return setStamp({ kind: 'bad', title: 'NO WEIGHT', detail: 'No stable weight on the scale.' });
     printingRef.current = true;
     try {
@@ -285,19 +304,33 @@ export default function Station() {
         )}
 
         <div className="row" style={{ marginTop: 8 }}>
-          <div className="field" style={{ maxWidth: 170 }}>
-            <label>Pack date</label>
-            <input type="date" value={packDate} onChange={(e) => setPackDate(e.target.value)} />
-          </div>
-          <div className="field" style={{ maxWidth: 90 }}>
+          <div className="field">
             <label>Batch</label>
-            <input type="number" min="1" value={batchNo} onChange={(e) => setBatchNo(e.target.value)} />
+            <select value={batchId} onChange={(e) => pickBatch(e.target.value)}>
+              <option value="">
+                {batches.length ? 'Select an open batch…' : 'No open batch — the office opens one'}
+              </option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.lot_code} · {b.batch_type}
+                  {b.input_weight_lb ? ` · ${Number(b.input_weight_lb).toFixed(0)} lb in` : ''}
+                </option>
+              ))}
+            </select>
           </div>
-          <button className="btn secondary" onClick={setLotFromForm} style={{ alignSelf: 'flex-end' }}>Set lot</button>
         </div>
-        {lot && <div style={{ marginTop: 10 }}>
-          Lot <span className="serial">{lot.lot_code}</span>{lot.local ? ' (local — created on next upload)' : ''}
-        </div>}
+        {lot ? (
+          <div style={{ marginTop: 10 }}>
+            Printing into lot <span className="serial">{lot.lot_code}</span>
+            {batch?.output_packs > 0 && (
+              <span className="custmeta"> · {batch.output_packs} packs out so far</span>
+            )}
+          </div>
+        ) : (
+          <div className="custmeta" style={{ marginTop: 10 }}>
+            Nothing can be printed until a batch is open. Ask the office to open one on the Batches screen.
+          </div>
+        )}
       </div>
 
       <div className="panel weighpanel">
