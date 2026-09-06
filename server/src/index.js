@@ -11,8 +11,6 @@ import orders from './routes/orders.js';
 import scan from './routes/scan.js';
 import reports from './routes/reports.js';
 import batches from './routes/batches.js';
-import cms from './routes/cms.js';
-import { startCmsSync } from './cms/sync.js';
 
 const app = express();
 const origins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
@@ -27,7 +25,22 @@ app.use('/api/orders', orders);
 app.use('/api/scan', scan);
 app.use('/api/reports', reports);
 app.use('/api/batches', batches);
-app.use('/api/cms', cms);
+
+// The CMS cut list is an optional office integration that reaches a third-party
+// site and pulls in an HTML parser. Load it defensively: if anything about it
+// fails to import, the floor terminal, scan-in and packing must still come up.
+let startCmsSync = () => console.warn('cms: integration not loaded');
+try {
+  const [{ default: cms }, sync] = await Promise.all([
+    import('./routes/cms.js'), import('./cms/sync.js'),
+  ]);
+  app.use('/api/cms', cms);
+  startCmsSync = sync.startCmsSync;
+} catch (e) {
+  console.error(`cms: integration unavailable (${e.message}) — the rest of the ERP is unaffected`);
+  app.use('/api/cms', (_req, res) =>
+    res.status(503).json({ error: 'the CMS integration failed to load on this server' }));
+}
 
 // serve built client in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

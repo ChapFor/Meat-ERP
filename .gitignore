@@ -1,7 +1,13 @@
 node_modules/
 client/dist/
-server/.env
-.env
 station/bridge/config.json
 .claude/
 server/fixtures/
+
+# Secrets. Broad on purpose: a file named server.env or .env.local slipped past
+# the old two-line list, and one committed password is one too many.
+.env
+*.env
+.env.*
+server.env*
+!.env.example
