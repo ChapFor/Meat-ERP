@@ -1,7 +1,9 @@
 // One sync from the command line, for testing on the office PC:
 //   cd server && npm run cms:sync
-import { syncOnce } from './sync.js';
-import { pool } from '../db.js';
+import { loadEnv } from '../env.js';
+loadEnv();
+const { syncOnce } = await import('./sync.js');
+const { pool } = await import('../db.js');
 
 try {
   const r = await syncOnce({ force: process.argv.includes('--force') });

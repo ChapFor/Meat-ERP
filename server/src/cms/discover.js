@@ -11,8 +11,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnv } from '../env.js';
 import { CmsClient, pause, cmsConfigured } from './client.js';
 import { parseOrderList, parseOrderLines, isActive, detailUrlFrom, parseTable } from './parse.js';
+
+loadEnv();
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../fixtures');
 fs.mkdirSync(dir, { recursive: true });
@@ -25,9 +28,13 @@ const save = (name, html) => {
 const head = (t) => console.log(`\n=== ${t} ${'='.repeat(Math.max(0, 50 - t.length))}`);
 
 if (!cmsConfigured()) {
-  console.error('\nCMS_USERNAME and CMS_PASSWORD are not set.\n' +
-    'Put them in server/.env (which is gitignored) as:\n' +
-    '   CMS_USERNAME=yourlogin\n   CMS_PASSWORD=yourpassword\n');
+  const miss = [];
+  if (!process.env.CMS_USERNAME) miss.push('CMS_USERNAME');
+  if (!process.env.CMS_PASSWORD) miss.push('CMS_PASSWORD');
+  console.error(`\nStill missing in server/.env: ${miss.join(' and ')}\n\n` +
+    'Open server/.env and fill in the blank(s), one per line, no quotes:\n' +
+    '   CMS_USERNAME=yourlogin\n   CMS_PASSWORD=yourpassword\n\n' +
+    'That file is gitignored, so it never leaves this PC.\n');
   process.exit(1);
 }
 
