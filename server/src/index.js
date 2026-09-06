@@ -11,6 +11,8 @@ import orders from './routes/orders.js';
 import scan from './routes/scan.js';
 import reports from './routes/reports.js';
 import batches from './routes/batches.js';
+import cms from './routes/cms.js';
+import { startCmsSync } from './cms/sync.js';
 
 const app = express();
 const origins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
@@ -25,6 +27,7 @@ app.use('/api/orders', orders);
 app.use('/api/scan', scan);
 app.use('/api/reports', reports);
 app.use('/api/batches', batches);
+app.use('/api/cms', cms);
 
 // serve built client in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,5 +44,8 @@ app.use((err, _req, res, _next) => {
 // on the plant floor, so refuse to come up instead.
 const port = process.env.PORT || 3001;
 migrate()
-  .then(() => app.listen(port, () => console.log(`meat-erp api on :${port}`)))
+  .then(() => app.listen(port, () => {
+    console.log(`meat-erp api on :${port}`);
+    startCmsSync();          // no-op until CMS credentials are set
+  }))
   .catch((e) => { console.error(`startup aborted — ${e.message}`); process.exit(1); });

@@ -92,6 +92,43 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
   color: var(--muted); cursor: pointer; }
 .autotoggle input { width: 22px; height: 22px; accent-color: var(--violet); }
 
+/* Floor cut list — wall display. Dark and large: read from 10 ft, not 2. */
+.floor { background: #14181a; color: #f2f5f3; margin: -16px; padding: 16px 20px 40px;
+  min-height: 100vh; font-size: 20px; }
+.floorhead { display: flex; justify-content: space-between; align-items: baseline;
+  border-bottom: 3px solid #2c3538; padding-bottom: 10px; margin-bottom: 6px; }
+.floortitle { font-size: 30px; font-weight: 900; letter-spacing: .16em; }
+.floorbirds { margin-left: 18px; font-size: 22px; color: #8fd6a8; font-weight: 800; }
+.floorsync { font-size: 17px; color: #93a29c; }
+.floorbanner { background: #7f1d1d; color: #fff; font-weight: 900; letter-spacing: .08em;
+  padding: 12px 16px; border-radius: 8px; margin: 12px 0; font-size: 21px; }
+.floornotice { background: #4a3a12; color: #ffe6a8; padding: 9px 14px; border-radius: 8px;
+  margin: 10px 0; font-size: 17px; }
+.floorempty { color: #93a29c; text-align: center; padding: 70px 0; font-size: 26px; }
+.floorsection { margin-top: 20px; }
+.floorsectionhead { font-size: 23px; font-weight: 900; letter-spacing: .14em;
+  text-transform: uppercase; padding: 7px 12px; border-radius: 7px; display: inline-block; }
+.floorsection.past_due  .floorsectionhead { background: #7f1d1d; color: #fff; }
+.floorsection.due_today .floorsectionhead { background: #8a5a12; color: #fff; }
+.floorsection.upcoming  .floorsectionhead { background: #2c3538; color: #cfd8d4; }
+.floorcat { margin: 14px 0 2px; font-size: 16px; letter-spacing: .18em; text-transform: uppercase;
+  color: #8fa39b; font-weight: 800; }
+.floortable { width: 100%; border-collapse: collapse; }
+.floortable td { border-bottom: 1px solid #262e31; padding: 9px 8px; vertical-align: baseline; }
+.floorrow { cursor: pointer; }
+.floorrow:hover td { background: #1b2124; }
+.floorrow .fname { font-size: 25px; font-weight: 700; }
+.floorrow .fqty { font-size: 30px; font-weight: 900; text-align: right; white-space: nowrap;
+  font-variant-numeric: tabular-nums; width: 1%; }
+.floorrow .fuom { font-size: 16px; color: #93a29c; margin-left: 7px; font-weight: 600; }
+.floorrow .fsub { font-size: 17px; color: #9fb0a9; white-space: nowrap; }
+.floorflag { background: #8a5a12; color: #fff; font-size: 13px; font-weight: 800;
+  padding: 2px 8px; border-radius: 999px; margin-left: 10px; letter-spacing: .06em;
+  text-transform: uppercase; vertical-align: middle; }
+.floorsub td { font-size: 17px; color: #b9c6c0; background: #191f21; padding-left: 22px; }
+.floorsub .fo { color: #8fa39b; }
+.floorsub .fnote { color: #ffd98a; font-weight: 700; }
+
 /* shell switch: plant terminal vs office */
 .shellswitch { display: flex; gap: 2px; background: #2b3330; border-radius: 999px; padding: 2px; }
 .shellswitch button { background: none; border: none; color: #9db4a8; font-size: 11px;

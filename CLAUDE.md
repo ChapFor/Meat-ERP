@@ -124,6 +124,38 @@ invoice export (IIF/CSV first), simple auth (shared passcode).
 - Master data is editable in-app: Items (products) and Customers. Deactivating
   either is a soft flag; existing cases and orders keep their history.
 
+## CMS cut list (`server/src/cms/`)
+- Pulls open wholesale orders from Custom Meat Solutions and turns them into the
+  plant-floor cut list. CMS stays the system of record; `cms_*` tables are a
+  **cache** and we never write back. The Floor screen reads only our database, so
+  a CMS outage degrades to stale data, not a blank wall display.
+- Credentials are env vars only — `CMS_USERNAME`, `CMS_PASSWORD`, optional
+  `CMS_BASE_URL`. Sync stays disabled (and says so) when they are unset, so a
+  deploy without them is quiet rather than erroring every five minutes.
+- Login is a plain form POST to `/login` with `username`, `password` and hidden
+  `login-page=site`; no CSRF token. `/custommeats/login.odb` 302s there. OTP is
+  an alternative login, not a second factor — if the account is ever moved to
+  OTP-only this integration stops working.
+- **"Each" means a retail pack, not a piece.** 50 Each Boneless Breast = 50 packs
+  = 100 breasts = 50 birds. Pack contents live in `cms_products`; quantities
+  ordered in Each and in lb are never added together, and a product ordered both
+  ways is reported as two rows rather than one wrong number. Unmapped products
+  still appear on the floor, flagged, so nothing silently disappears.
+- Parsing is **header-driven** (`parse.js`): columns are found by header text, so
+  a reordered or inserted column cannot shift the data, and an unrecognisable
+  page throws rather than guessing. Tests: `src/cms/parse.test.mjs`,
+  `src/cms/aggregate.test.mjs` — both run with plain `node`, no database.
+- Pre-Order Mode ON is demand, OFF is the cart (what is packed);
+  `remaining = preorder − packed` matched on product name + order UOM. The toggle
+  mechanism is a discovery item, so it is configured by `CMS_PREORDER_ON` /
+  `CMS_PREORDER_OFF` URL fragments rather than hard-coded; with neither set the
+  sync falls back to classifying lines by their own Item Status.
+- `npm run cms:discover` dumps real HTML to `server/fixtures/` (gitignored — it
+  is live order data) so the parser can be finished against actual pages.
+- A `DATE` column comes back from pg as a **JS Date at local midnight**. Use
+  `isoDate()` from `aggregate.js`; slicing the string gives "Wed Sep 09" and
+  quietly drops every order into Upcoming, and `toISOString()` shifts the day.
+
 ## Conventions
 - Migrations: numbered files in `server/migrations/`, additive only, never edited
   after being run. **Applied automatically on server boot** by `server/src/migrate.js`

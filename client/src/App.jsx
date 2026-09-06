@@ -7,8 +7,13 @@ import Packing from './pages/Packing.jsx';
 import Customers from './pages/Customers.jsx';
 import Items from './pages/Items.jsx';
 import Batches from './pages/Batches.jsx';
+import Floor from './pages/Floor.jsx';
+import CutList from './pages/CutList.jsx';
 
-const ALL = { Station, 'Scan in': ScanIn, Inventory, Batches, Orders, Packing, Customers, Items };
+const ALL = {
+  Floor, Station, 'Scan in': ScanIn, Inventory, Batches, Orders, Packing,
+  Customers, Items, 'Cut list': CutList,
+};
 
 // Two shells for two jobs. Plant is the floor terminal: produce, scan, pack —
 // no costing and no master data. Admin is the office and sees everything.
@@ -16,7 +21,7 @@ const ALL = { Station, 'Scan in': ScanIn, Inventory, Batches, Orders, Packing, C
 // the API still serves costs to anyone who asks. Revisit when the shared
 // passcode lands.
 const SHELLS = {
-  plant: ['Station', 'Scan in', 'Inventory', 'Packing'],
+  plant: ['Floor', 'Station', 'Scan in', 'Inventory', 'Packing'],
   admin: Object.keys(ALL),
 };
 
