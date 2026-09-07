@@ -36,14 +36,19 @@ export async function syncOnce({ force = false, log = console.log } = {}) {
   const cms = new CmsClient({ log });
   let seen = 0, read = 0;
   try {
+    // Say WHY each candidate failed. Swallowing these produced a bare "could
+    // not load the CMS order list page", which is useless from a deploy log.
     let listHtml = null;
+    const attempts = [];
     for (const p of LIST_PATHS) {
       try {
         const { html } = await cms.getPage(p);
         if (/Shopper/i.test(html)) { listHtml = html; break; }
-      } catch { /* try the next path */ }
+        attempts.push(`${p}: loaded ${html.length}b but no Shopper column`);
+      } catch (e) { attempts.push(`${p}: ${e.message}`); }
     }
-    if (!listHtml) throw new Error('could not load the CMS order list page');
+    if (!listHtml)
+      throw new Error(`could not load the CMS order list page — ${attempts.join(' | ')}`);
 
     const all = parseOrderList(listHtml);
     const active = all.filter((o) => isActive(o.status));

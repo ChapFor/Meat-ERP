@@ -42,7 +42,18 @@ r.get('/status', async (_req, res, next) => {
     const counts = (await q(
       `SELECT COUNT(*) FILTER (WHERE closed_at IS NULL)::int AS open_orders,
               COUNT(*)::int AS all_orders FROM cms_orders`)).rows[0];
-    res.json({ configured: cmsConfigured(), runs, ...counts });
+    // which credentials the server can see — names only, never values
+    res.json({
+      configured: cmsConfigured(),
+      credentials: {
+        CMS_USERNAME: !!process.env.CMS_USERNAME,
+        CMS_PASSWORD: !!process.env.CMS_PASSWORD,
+        CMS_PIN: !!process.env.CMS_PIN,
+        CMS_BASE_URL: process.env.CMS_BASE_URL || '(default)',
+      },
+      node: process.version,
+      runs, ...counts,
+    });
   } catch (e) { next(e); }
 });
 
