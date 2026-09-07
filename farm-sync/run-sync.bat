@@ -8,9 +8,16 @@ setlocal
 cd /d "%~dp0..\server"
 set "LOG=%~dp0sync.log"
 
-where node >nul 2>&1
-if errorlevel 1 (
-  echo %DATE% %TIME%  FAILED: Node.js is not installed on this PC>>"%LOG%"
+rem A scheduled task runs with a bare environment, so node may be installed but
+rem not on ITS path. Look in the usual places before giving up.
+set "NODEEXE="
+for /f "delims=" %%p in ('where node 2^>nul') do if not defined NODEEXE set "NODEEXE=%%p"
+if not defined NODEEXE if exist "%ProgramFiles%\nodejs\node.exe" set "NODEEXE=%ProgramFiles%\nodejs\node.exe"
+if not defined NODEEXE if exist "%ProgramFiles(x86)%\nodejs\node.exe" set "NODEEXE=%ProgramFiles(x86)%\nodejs\node.exe"
+if not defined NODEEXE if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "NODEEXE=%LOCALAPPDATA%\Programs\nodejs\node.exe"
+if not defined NODEEXE if exist "%APPDATA%\nvm\nodejs\node.exe" set "NODEEXE=%APPDATA%\nvm\nodejs\node.exe"
+if not defined NODEEXE (
+  echo %DATE% %TIME%  FAILED: Node.js not found. Install the LTS from https://nodejs.org — the task will start working by itself on its next run>>"%LOG%"
   exit /b 1
 )
 if not exist ".env" (
@@ -18,7 +25,7 @@ if not exist ".env" (
   exit /b 1
 )
 
-node src/cms/sync-once.js >>"%LOG%" 2>&1
+"%NODEEXE%" src/cms/sync-once.js >>"%LOG%" 2>&1
 if errorlevel 1 (
   echo %DATE% %TIME%  sync FAILED - see the lines above>>"%LOG%"
 ) else (

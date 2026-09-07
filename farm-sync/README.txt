@@ -23,6 +23,13 @@
   WHAT YOU NEED FIRST
 --------------------------------------------------------------------
 
+  NODE.JS, INSTALLED PROPERLY ON THIS PC.
+
+  Get the LTS from https://nodejs.org and install it with the default
+  options. A scheduled task runs with a bare environment, so a copy of
+  node sitting loose in a folder is not enough - it has to be a real
+  install. If it is missing, sync.log will say so on every run.
+
   server\.env on this PC must contain four things:
 
       CMS_USERNAME=...       your CMS login
