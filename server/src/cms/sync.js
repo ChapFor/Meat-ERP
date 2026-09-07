@@ -10,46 +10,18 @@ import { parseOrderList, parseOrderLines, rowHash, isActive } from './parse.js';
 const LIST_PATHS = ['/custommeats/Retail_main.odb', '/Retail_main.odb'];
 const DETAIL_PAUSE_MS = 800;      // be gentle between order pages
 
-// The Pre-Order Mode checkbox turns the detail page between demand and cart.
-// The exact mechanism is a Phase-1 discovery item, so it is configurable rather
-// than hard-coded: set these once discover.js reveals them and no code changes.
-//   CMS_PREORDER_ON  e.g. "preorder=1"     appended to the detail URL
-//   CMS_PREORDER_OFF e.g. "preorder=0"
-const modeSuffix = (on) =>
-  (on ? process.env.CMS_PREORDER_ON : process.env.CMS_PREORDER_OFF) || null;
-
-const withParam = (url, param) => {
-  if (!param) return url;
-  return url + (url.includes('?') ? '&' : '?') + param;
-};
-
-// When we cannot toggle modes, fall back to the line's own Item Status:
-// PreOrder lines are demand, anything else is what is already in the cart.
-const classify = (line, mode) => {
-  if (mode === 'PREORDER' || mode === 'PACKED') return mode;
-  return /pre\s*-?\s*order/i.test(String(line.item_status || '')) ? 'PREORDER' : 'PACKED';
-};
-
-async function fetchLines(cms, detailUrl) {
-  const on = modeSuffix(true), off = modeSuffix(false);
-  const out = [];
-
-  if (on || off) {
-    if (on) {
-      const { html } = await cms.getPage(withParam(detailUrl, on));
-      for (const l of parseOrderLines(html)) out.push({ ...l, kind: 'PREORDER' });
-      await pause(300);
-    }
-    if (off) {
-      const { html } = await cms.getPage(withParam(detailUrl, off));
-      for (const l of parseOrderLines(html)) out.push({ ...l, kind: 'PACKED' });
-    }
-    return { lines: out, toggled: true };
-  }
-
-  const { html } = await cms.getPage(detailUrl);
-  for (const l of parseOrderLines(html)) out.push({ ...l, kind: classify(l, null) });
-  return { lines: out, toggled: false };
+// Opening an order is a form POST (the pencil icon submits retail_checkout.odb
+// with retail_id and retail_tagnum), and one fetch is enough: every line carries
+// retaild_preqty (demand) AND retaild_qty (packed), so there is no need to
+// toggle Pre-Order Mode and no window in which the two views could disagree.
+// PreOrderFlag=yes keeps the page in the mode that renders both.
+async function fetchLines(cms, order) {
+  if (!order.detail?.action) throw new Error(`order ${order.order_no} has no open form`);
+  const path = order.detail.action.startsWith('/')
+    ? order.detail.action
+    : '/custommeats/' + order.detail.action;
+  const { html } = await cms.postPage(path, { ...order.detail.fields, PreOrderFlag: 'yes' });
+  return { lines: parseOrderLines(html) };
 }
 
 export async function syncOnce({ force = false, log = console.log } = {}) {
@@ -97,14 +69,14 @@ export async function syncOnce({ force = false, log = console.log } = {}) {
            last_seen_at=now(), closed_at=NULL`,
         [o.order_no, o.customer, o.created_text, o.requested_by, o.requested_text,
          o.status, o.pickup_method, o.notes, o.items_packed, o.items_total,
-         o.pre_items, hash, o.detail_url]);
+         o.pre_items, hash, o.detail?.fields?.retail_id || o.detail_url]);
 
       // unchanged since last poll -> reuse cached lines, skip the detail fetch
       if (!force && existing.get(o.order_no) === hash) continue;
-      if (!o.detail_url) { log(`cms: order ${o.order_no} has no detail link, skipping lines`); continue; }
+      if (!o.detail?.action) { log(`cms: order ${o.order_no} has no open form, skipping lines`); continue; }
 
       await pause(DETAIL_PAUSE_MS);
-      const { lines } = await fetchLines(cms, o.detail_url);
+      const { lines } = await fetchLines(cms, o);
       read++;
 
       const client = await pool.connect();

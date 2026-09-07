@@ -83,6 +83,38 @@ export class CmsClient {
       /Business Authentication/i.test(html || '');
   }
 
+  // CMS has TWO gates. The business login above yields a SITE-JWT; protected
+  // pages then need an employee PIN, which refreshes that same JWT with an
+  // empId claim. Without it every page renders as "CMS Employee Sign In" with
+  // an empty body and a modal — a 200 that contains nothing.
+  // Match the gate, not the plumbing: pin-modal-trigger.js is included in the
+  // global layout on EVERY page, so keying off the script name reports a locked
+  // door on pages that opened fine. The signed-out shell is identifiable by its
+  // title, or by the modal's own form actually being present in the body.
+  looksLikePinGate(html) {
+    const h = html || '';
+    return /<title>[^<]*Employee Sign In/i.test(h) || /id=["']pin-login-form["']/i.test(h);
+  }
+
+  async pinLogin() {
+    const pin = process.env.CMS_PIN;
+    if (!pin) throw new Error(
+      'CMS wants an employee PIN after the business login, but CMS_PIN is not set');
+    const res = await this.raw('/custommeats/pin-login', {
+      method: 'POST',
+      body: new URLSearchParams({ pin }).toString(),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'HX-Request': 'true',          // it is an htmx endpoint; 204 means accepted
+      },
+    });
+    if (res.status !== 204 && !res.ok)
+      throw new Error(`CMS rejected the employee PIN (HTTP ${res.status}) — check CMS_PIN`);
+    this.pinOk = true;
+    this.log('cms: employee PIN accepted');
+    return true;
+  }
+
   async login() {
     if (!this.username || !this.password)
       throw new Error('CMS_USERNAME and CMS_PASSWORD are not set on the server');
@@ -105,6 +137,7 @@ export class CmsClient {
     }
     this.loggedIn = true;
     this.log('cms: logged in');
+    if (process.env.CMS_PIN) await this.pinLogin();
     return true;
   }
 
@@ -120,6 +153,16 @@ export class CmsClient {
       html = await res.text();
       if (this.looksLikeLogin(html, url))
         throw new Error(`CMS redirected ${path} to the login page even after signing in`);
+    }
+    // The PIN expires on its own timer, so a page can come back as the employee
+    // sign-in shell mid-run. Re-enter the PIN and fetch it again.
+    if (this.looksLikePinGate(html)) {
+      this.log('cms: employee PIN needed, re-entering');
+      await this.pinLogin();
+      ({ res, url } = await this.follow(path));
+      html = await res.text();
+      if (this.looksLikePinGate(html))
+        throw new Error(`CMS still shows the employee PIN screen for ${path} — is CMS_PIN correct?`);
     }
     if (!res.ok) throw new Error(`CMS ${path} returned ${res.status}`);
     return { html, url };

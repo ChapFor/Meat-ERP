@@ -27,7 +27,12 @@ export function parseXofY(text) {
 export function parseDate(text) {
   const t = norm(text);
   if (!t) return null;
-  let m = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+  // CMS date cells lead with a sortable stamp: "20260305 03/05/2026". Take it
+  // first — it is unambiguous, unlike the display half.
+  let m = t.match(/\b(\d{4})(\d{2})(\d{2})\b/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[3]) >= 1 && Number(m[3]) <= 31)
+    return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = t.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
   if (m) {
@@ -49,12 +54,19 @@ export function parseTable(html, must = []) {
 
   for (const table of $('table').toArray()) {
     const $t = $(table);
-    // header row = the first row that has th cells, else the first row
-    let $head = $t.find('tr').filter((_, tr) => $(tr).find('th').length > 0).first();
-    if (!$head.length) $head = $t.find('tr').first();
-    const headers = $head.find('th,td').toArray().map((c) => slug($(c).text()));
-    if (!headers.length) continue;
-    if (!wanted.every((w) => headers.some((h) => h.includes(w)))) continue;
+    const trs = $t.find('tr').toArray();
+
+    // The header is the first row whose own cells carry every wanted heading.
+    // "First row containing a th" is not good enough here: CMS data rows mix th
+    // and td, so that test picks a data row on some tables.
+    let headIdx = -1, headers = [];
+    for (let i = 0; i < Math.min(trs.length, 6); i++) {
+      const cells = $(trs[i]).children('th,td').toArray().map((c) => slug($(c).text()));
+      if (cells.length && wanted.every((w) => cells.some((h) => h.includes(w)))) {
+        headIdx = i; headers = cells; break;
+      }
+    }
+    if (headIdx < 0) continue;
 
     const idx = {};
     headers.forEach((h, i) => { if (h && idx[h] === undefined) idx[h] = i; });
@@ -66,15 +78,29 @@ export function parseTable(html, must = []) {
     };
 
     const rows = [];
-    const all = $t.find('tr').toArray();
-    const start = all.indexOf($head[0]) + 1;
-    for (const tr of all.slice(start)) {
+    for (const tr of trs.slice(headIdx + 1)) {
       const $tr = $(tr);
-      const cells = $tr.find('td').toArray().map((c) => norm($(c).text()));
-      if (!cells.length || cells.every((c) => !c)) continue;
+      // children('th,td'), not find('td'): a CMS row is <th><td>...<td><th><th>,
+      // so reading only td drops the first cell and shifts every column by one.
+      // children() also stops us pulling cells out of a nested table.
+      const $cells = $tr.children('th,td');
+      if ($cells.length < Math.max(2, headers.length - 2)) continue;   // spacer row
+      const cells = $cells.toArray().map((c) => norm($(c).text()));
+      if (cells.every((c) => !c)) continue;
+
+      const $form = $tr.find('form').first();
       rows.push({
         cells,
+        attrs: $tr.attr() || {},
         get: (want) => { const i = at(want); return i >= 0 ? (cells[i] ?? null) : null; },
+        // Opening an order is a form POST, not a link.
+        form: $form.length ? {
+          action: $form.attr('action') || null,
+          method: (($form.attr('method') || 'GET').toUpperCase()),
+          fields: Object.fromEntries($form.find('input[type=hidden]').toArray()
+            .map((h) => [$(h).attr('name'), $(h).attr('value')])
+            .filter(([k]) => k)),
+        } : null,
         links: $tr.find('a').toArray().map((a) => ({
           href: $(a).attr('href') || null,
           onclick: $(a).attr('onclick') || null,
@@ -87,6 +113,19 @@ export function parseTable(html, must = []) {
     return { headers, rows, at };
   }
   throw new Error(`no table found containing headers: ${must.join(', ')}`);
+}
+
+// "0 of 6 PreItems: 8" — CMS packs both numbers into the Active Items cell
+// rather than giving PreItems a column of its own.
+export function parseActiveItems(text) {
+  const t = String(text || '');
+  const xy = t.match(/(\d+)\s*of\s*(\d+)/i);
+  const pre = t.match(/PreItems:\s*(\d+)/i);
+  return {
+    packed: xy ? Number(xy[1]) : null,
+    total: xy ? Number(xy[2]) : null,
+    pre_items: pre ? Number(pre[1]) : null,
+  };
 }
 
 // Pull whatever looks like the "Open" link for an order row. CMS may use an
@@ -107,39 +146,86 @@ export function detailUrlFrom(row) {
 export function parseOrderList(html) {
   const { rows } = parseTable(html, ['Shopper', 'Customer', 'Order Status']);
   return rows.map((r) => {
-    const xofy = parseXofY(r.get('Active Items'));
+    const items = parseActiveItems(r.get('Active Items'));
     const requestedText = r.get('Requested By Date') || r.get('Requested By');
+    // The status CELL is "Picked Up $108.90" — status welded to the order total.
+    // The row's data-status attribute is the clean value, so prefer it.
+    const cellStatus = String(r.get('Order Status') || '')
+      .replace(/\$[\d,.]+/g, '').trim();
     return {
       order_no: r.get('Shopper'),
       created_text: r.get('Created'),
       customer: r.get('Customer'),
-      items_packed: xofy.packed,
-      items_total: xofy.total,
-      pre_items: num(r.get('PreItems')),
+      items_packed: items.packed,
+      items_total: items.total,
+      pre_items: items.pre_items,
       notes: r.get('Notes') || r.get('Comments'),
       requested_text: requestedText,
       requested_by: parseDate(requestedText),
       pickup_method: r.get('Pick Up Method'),
-      status: r.get('Order Status'),
+      status: r.attrs?.['data-status'] || cellStatus || null,
+      // Opening an order posts a form; keep the whole thing, not a URL.
+      detail: r.form && r.form.action ? r.form : null,
       detail_url: detailUrlFrom(r),
+      retail_id: r.form?.fields?.retail_id || null,
     };
-  }).filter((o) => o.order_no);
+  }).filter((o) => o.order_no && /\d/.test(o.order_no));
 }
 
-/** Order detail lines (spec §3), in whichever mode the page was fetched. */
+/**
+ * Order detail lines (spec §3).
+ *
+ * The brief assumed two fetches per order — Pre-Order Mode ON for demand, OFF
+ * for the cart. The real page carries BOTH on every row as hidden inputs:
+ *     retaild_preqty{n}  what the customer ordered   -> PREORDER
+ *     retaild_qty{n}     what has been packed        -> PACKED
+ * so one fetch gives us both, halving the requests and removing any chance of
+ * the two modes disagreeing because something changed between them.
+ *
+ * Rows are anchored on those input names rather than on column position: the
+ * header has ten cells and the data rows nine, so index mapping does not line
+ * up, and the quantity inputs live in the same cell as the Order UOM text.
+ */
 export function parseOrderLines(html) {
-  const { rows } = parseTable(html, ['Product']);
-  return rows.map((r) => ({
-    item_no: num(r.get('Item')),
-    pkg: num(r.get('Pkg')),
-    qty: num(r.get('Total Qty')) ?? num(r.get('Qty')),
-    // Order UOM is what the customer ordered in and drives the whole cut list;
-    // Sold UOM is pricing only.
-    order_uom: r.get('Order UOM'),
-    sold_uom: r.get('Sold UOM'),
-    product_name: r.get('Product'),
-    item_status: r.get('Item Status') || r.get('Status'),
-  })).filter((l) => l.product_name);
+  const $ = cheerio.load(html);
+  const out = [];
+
+  for (const tr of $('tr').toArray()) {
+    const $tr = $(tr);
+    const $qty = $tr.find('input[name^="retaild_preqty"]').first();
+    if (!$qty.length) continue;
+
+    const n = (String($qty.attr('name')).match(/(\d+)$/) || [])[1];
+    const val = (sel) => $tr.find(sel).first().attr('value');
+    const preQty = num($qty.attr('value'));
+    const packedQty = num(val(`input[name="retaild_qty${n}"]`));
+    const pkg = num(val(`input[name="retaild_pkg${n}"]`)) ?? 1;
+
+    // Walk right from the cell holding the quantity inputs: that cell's text is
+    // the Order UOM, then Sold UOM, then the product description.
+    const $cells = $tr.children('th,td');
+    const qtyCellIdx = $cells.toArray().findIndex((c) => $(c).find(`input[name="retaild_preqty${n}"]`).length);
+    const cellText = (i) => (i >= 0 && i < $cells.length ? norm($cells.eq(i).text()) : '');
+    const orderUom = cellText(qtyCellIdx);
+    const soldUom = cellText(qtyCellIdx + 1);
+    const product = cellText(qtyCellIdx + 2);
+
+    const status = norm($tr.find(`input[name="retaild_status${n}"]`).attr('value') || '')
+      || cellText(qtyCellIdx + 5);
+    if (!product) continue;
+
+    const base = {
+      item_no: Number(n),
+      pkg,
+      order_uom: orderUom,
+      sold_uom: soldUom,
+      product_name: product,
+      item_status: status,
+    };
+    if (preQty !== null && preQty > 0) out.push({ ...base, kind: 'PREORDER', qty: preQty });
+    if (packedQty !== null && packedQty > 0) out.push({ ...base, kind: 'PACKED', qty: packedQty });
+  }
+  return out;
 }
 
 // Change detection (spec §4.2): skip the detail fetch when nothing moved.
