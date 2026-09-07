@@ -6,7 +6,11 @@
 // list is worse than a loud failure.
 //
 // Pure functions: feed them the fixtures in server/fixtures/ to test offline.
-import * as cheerio from 'cheerio';
+// cheerio/slim, not cheerio: the full entry point pulls in undici for its
+// fromURL() helper, and undici 7 dereferences a global File that does not exist
+// before Node 20 — which crashed the whole server on Railway's Node 18. We only
+// ever parse strings, so the slim build is all we need and it loads no undici.
+import * as cheerio from 'cheerio/slim';
 
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const slug = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');

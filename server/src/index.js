@@ -2,7 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadEnv } from './env.js';
 import { migrate } from './migrate.js';
+
+// server/.env for local runs; on Railway the real environment already has these
+// and loadEnv never overwrites what is already set.
+loadEnv();
 import products from './routes/products.js';
 import customers from './routes/customers.js';
 import lots from './routes/lots.js';
@@ -29,15 +34,19 @@ app.use('/api/batches', batches);
 // The CMS cut list is an optional office integration that reaches a third-party
 // site and pulls in an HTML parser. Load it defensively: if anything about it
 // fails to import, the floor terminal, scan-in and packing must still come up.
+// Imported one at a time and each guarded on its own. A previous version loaded
+// both with Promise.all inside a single try; the failure still escaped and took
+// the process down, so nothing here relies on a shared catch any more.
 let startCmsSync = () => console.warn('cms: integration not loaded');
-try {
-  const [{ default: cms }, sync] = await Promise.all([
-    import('./routes/cms.js'), import('./cms/sync.js'),
-  ]);
-  app.use('/api/cms', cms);
-  startCmsSync = sync.startCmsSync;
-} catch (e) {
-  console.error(`cms: integration unavailable (${e.message}) — the rest of the ERP is unaffected`);
+let cmsRoutes = null;
+try { cmsRoutes = (await import('./routes/cms.js')).default; }
+catch (e) { console.error(`cms: routes unavailable (${e.message})`); }
+try { startCmsSync = (await import('./cms/sync.js')).startCmsSync; }
+catch (e) { console.error(`cms: sync unavailable (${e.message})`); }
+
+if (cmsRoutes) app.use('/api/cms', cmsRoutes);
+else {
+  console.error('cms: serving 503 for /api/cms — the rest of the ERP is unaffected');
   app.use('/api/cms', (_req, res) =>
     res.status(503).json({ error: 'the CMS integration failed to load on this server' }));
 }
