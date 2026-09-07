@@ -23,8 +23,18 @@ export class CmsClient {
   constructor({ baseUrl, username, password, log = () => {} } = {}) {
     this.base = (baseUrl || process.env.CMS_BASE_URL || 'https://custommeatsolutions.com')
       .replace(/\/+$/, '');
-    this.username = username || process.env.CMS_USERNAME;
-    this.password = password || process.env.CMS_PASSWORD;
+    // Pasting into a hosting dashboard often carries a stray space or a pair of
+    // quotes into the value. Strip both: "secret" and secret must behave alike.
+    const tidy = (v) => {
+      if (v === undefined || v === null) return v;
+      let s = String(v).trim();
+      if (s.length > 1 && ((s.startsWith('"') && s.endsWith('"')) ||
+                           (s.startsWith("'") && s.endsWith("'")))) s = s.slice(1, -1).trim();
+      return s;
+    };
+    this.username = tidy(username || process.env.CMS_USERNAME);
+    this.password = tidy(password || process.env.CMS_PASSWORD);
+    this.pin = tidy(process.env.CMS_PIN);
     this.jar = new Map();
     this.loggedIn = false;
     this.log = log;
@@ -97,7 +107,7 @@ export class CmsClient {
   }
 
   async pinLogin() {
-    const pin = process.env.CMS_PIN;
+    const pin = this.pin || process.env.CMS_PIN;
     if (!pin) throw new Error(
       'CMS wants an employee PIN after the business login, but CMS_PIN is not set');
     const res = await this.raw('/custommeats/pin-login', {
@@ -131,13 +141,21 @@ export class CmsClient {
     });
     const html = await res.text();
     // Spring-style failure comes back at /login?error, or simply renders the form again
-    if (/[?&]error/i.test(url) || this.looksLikeLogin(html, url)) {
+    const explicitError = /[?&]error/i.test(url);
+    if (explicitError || this.looksLikeLogin(html, url)) {
       this.loggedIn = false;
-      throw new Error('CMS login was rejected — check CMS_USERNAME / CMS_PASSWORD');
+      // Say enough to tell a wrong password apart from a block page or a
+      // false positive in the detector, without echoing any credential.
+      throw new Error(
+        `CMS login was rejected (${explicitError ? 'redirected to ?error — credentials refused'
+          : 'response still looked like the sign-in form'}; ` +
+        `HTTP ${res.status}, ${html.length}b, landed on ${url}; ` +
+        `username ${this.username ? this.username.length + ' chars' : 'MISSING'}, ` +
+        `password ${this.password ? this.password.length + ' chars' : 'MISSING'})`);
     }
     this.loggedIn = true;
     this.log('cms: logged in');
-    if (process.env.CMS_PIN) await this.pinLogin();
+    if (this.pin) await this.pinLogin();
     return true;
   }
 
