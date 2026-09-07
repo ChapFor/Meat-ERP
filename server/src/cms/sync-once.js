@@ -19,7 +19,29 @@ const describe = (e) => {
   return `${e.message || e}${e.code ? ` (${e.code})` : ''}`;
 };
 
-try {
+// Check the connection string's shape before dialling. Railway shows the proxy
+// host, the internal host and the full URL in different places, and pasting the
+// wrong one otherwise surfaces as an opaque driver error.
+function databaseUrlProblem(u) {
+  if (!u) return 'DATABASE_URL is not set in server\\.env';
+  if (/^\$\{\{.*\}\}$/.test(u.trim()))
+    return 'DATABASE_URL is a Railway variable reference (${{...}}), which only resolves inside Railway — paste the actual URL';
+  if (!/^postgres(ql)?:\/\//i.test(u))
+    return `DATABASE_URL is missing the postgresql:// prefix — it looks like just a host and port ("${u.slice(0, 40)}"). ` +
+      'In Railway open the Postgres service > Variables and copy DATABASE_PUBLIC_URL in full';
+  if (!u.includes('@'))
+    return 'DATABASE_URL has no user:password@ part — copy DATABASE_PUBLIC_URL from Railway in full';
+  if (/railway\.internal/i.test(u))
+    return 'DATABASE_URL is the internal address, which only works from inside Railway — use DATABASE_PUBLIC_URL (the ...proxy.rlwy.net one)';
+  return null;
+}
+
+const dbProblem = databaseUrlProblem(process.env.DATABASE_URL);
+if (dbProblem) {
+  console.error(`sync FAILED — ${dbProblem}`);
+  process.exitCode = 1;
+  await pool.end().catch(() => {});
+} else try {
   const r = await syncOnce();
   console.log(`sync ok — ${r.orders_seen} active order(s), ${r.orders_read} detail page(s) read`);
   process.exitCode = 0;
