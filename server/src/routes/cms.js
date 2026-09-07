@@ -42,6 +42,11 @@ r.get('/status', async (_req, res, next) => {
     const counts = (await q(
       `SELECT COUNT(*) FILTER (WHERE closed_at IS NULL)::int AS open_orders,
               COUNT(*)::int AS all_orders FROM cms_orders`)).rows[0];
+    // Who fetched the data does not matter to the floor. When CMS blocks cloud
+    // egress the farm PC syncs instead, so "is it fresh?" is the real question —
+    // not "does THIS server hold credentials?".
+    const lastOk = (await q(
+      `SELECT finished_at FROM cms_sync_log WHERE ok ORDER BY finished_at DESC LIMIT 1`)).rows[0];
     // which credentials the server can see — names only, never values
     res.json({
       configured: cmsConfigured(),
@@ -52,6 +57,10 @@ r.get('/status', async (_req, res, next) => {
         CMS_BASE_URL: process.env.CMS_BASE_URL || '(default)',
       },
       node: process.version,
+      last_ok_at: lastOk?.finished_at || null,
+      minutes_since_ok: lastOk?.finished_at
+        ? Math.round((Date.now() - new Date(lastOk.finished_at).getTime()) / 60000) : null,
+      syncs_here: cmsConfigured(),   // false when the farm PC does the syncing
       runs, ...counts,
     });
   } catch (e) { next(e); }

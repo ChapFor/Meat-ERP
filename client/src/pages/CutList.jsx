@@ -45,15 +45,25 @@ export default function CutList() {
     <>
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <div className="eyebrow" style={{ margin: 0 }}>CMS cut list</div>
-        <button className="btn" onClick={syncNow} disabled={busy || !status?.configured}>
+        <button className="btn" onClick={syncNow} disabled={busy || !status?.syncs_here}
+          title={status?.syncs_here ? '' : 'This server cannot reach CMS; the farm PC syncs on a timer'}>
           {busy ? 'Syncing…' : 'Sync now'}
         </button>
       </div>
 
-      {status && !status.configured && (
-        <div className="stamp warn">CMS NOT CONNECTED
-          <small>Set CMS_USERNAME and CMS_PASSWORD in the server environment, then redeploy.
-            Until then the floor screen has nothing to show.</small>
+      {/* What matters is whether the data is fresh, not which machine fetched
+          it: CMS blocks the cloud server, so the farm PC does the syncing. */}
+      {status && status.minutes_since_ok === null && (
+        <div className="stamp warn">NO SYNC HAS SUCCEEDED YET
+          <small>{status.syncs_here
+            ? 'This server has CMS credentials but has not completed a sync — check the runs below.'
+            : 'This server does not sync. The farm PC does, on a 5 minute task — check that it is on and that farm-sync\\sync.log looks healthy.'}</small>
+        </div>
+      )}
+      {status && status.minutes_since_ok !== null && status.minutes_since_ok > 30 && (
+        <div className="stamp warn">SYNC IS STALE
+          <small>Last good sync {status.minutes_since_ok} minutes ago.
+            {status.syncs_here ? '' : ' The farm PC does the syncing — check it is on and online.'}</small>
         </div>
       )}
       {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
@@ -64,6 +74,14 @@ export default function CutList() {
           <tr><td className="lbl">Last sync</td><td>
             {!last ? 'never' : `${last.ok ? 'ok' : 'FAILED'} · ${new Date(last.started_at).toLocaleString()}`}
             {last && !last.ok && last.error && <div style={{ color: 'var(--bad)' }}>{last.error}</div>}
+          </td></tr>
+          <tr><td className="lbl">Last good</td><td>
+            {status?.minutes_since_ok === null || status?.minutes_since_ok === undefined
+              ? 'never'
+              : `${status.minutes_since_ok} min ago`}
+          </td></tr>
+          <tr><td className="lbl">Synced by</td><td>
+            {status?.syncs_here ? 'this server' : 'the farm PC (CMS blocks the cloud server)'}
           </td></tr>
         </tbody></table>
       </div>

@@ -11,3 +11,4 @@ server/fixtures/
 .env.*
 server.env*
 !.env.example
+farm-sync/sync.log
