@@ -5,5 +5,5 @@
     "build": "cd client && npm install --include=dev && npm run build && cd ../server && npm install",
     "start": "cd server && npm start"
   },
-  "engines": { "node": ">=18" }
+  "engines": { "node": ">=20" }
 }
