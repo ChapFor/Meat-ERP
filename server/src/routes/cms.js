@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { q } from '../db.js';
+import { q, pool } from '../db.js';
 import { buildCutList } from '../cms/aggregate.js';
 import { syncOnce } from '../cms/sync.js';
 import { cmsConfigured } from '../cms/client.js';
@@ -22,16 +22,69 @@ r.get('/floor', async (_req, res, next) => {
     const products = (await q('SELECT * FROM cms_products')).rows;
     const last = (await q(
       `SELECT finished_at FROM cms_sync_log WHERE ok ORDER BY finished_at DESC LIMIT 1`)).rows[0];
+    const priority = (await q(
+      `SELECT customer FROM cms_priority ORDER BY position`)).rows.map((p) => p.customer);
 
     res.json({
       ...buildCutList({
         orders, lines, products,
         today: todayLocal(),
         syncedAt: last?.finished_at || null,
+        priority,
       }),
       configured: cmsConfigured(),
     });
   } catch (e) { next(e); }
+});
+
+// Cut-first customer order, dragged on the floor screen. Stored server-side so
+// the wall tablet and the office agree; names not listed here are simply
+// unranked and sort after the ranked ones.
+r.get('/priority', async (_req, res, next) => {
+  try {
+    res.json({
+      customers: (await q(`SELECT customer FROM cms_priority ORDER BY position`))
+        .rows.map((p) => p.customer),
+    });
+  } catch (e) { next(e); }
+});
+
+// Whole-list replace: a drag reorders everything, and half a saved ordering is
+// worse than none, so it goes in one transaction.
+r.put('/priority', async (req, res, next) => {
+  const raw = req.body?.customers;
+  if (!Array.isArray(raw))
+    return res.status(400).json({ error: 'customers must be an array of customer names' });
+  if (raw.length > 200)
+    return res.status(400).json({ error: 'at most 200 customers can be ranked' });
+
+  const customers = [];
+  const seen = new Set();
+  for (const v of raw) {
+    if (typeof v !== 'string' || !v.trim())
+      return res.status(400).json({ error: 'each customer must be a non-empty string' });
+    const name = v.trim();
+    if (name.length > 200)
+      return res.status(400).json({ error: `customer name is too long (max 200): ${name.slice(0, 40)}…` });
+    if (seen.has(name)) continue;            // a dupe is a UI slip, not an error
+    seen.add(name);
+    customers.push(name);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM cms_priority');
+    for (const [i, name] of customers.entries())
+      await client.query(
+        `INSERT INTO cms_priority (customer, position, updated_at) VALUES ($1, $2, now())`,
+        [name, i]);
+    await client.query('COMMIT');
+    res.json({ customers });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    next(e);
+  } finally { client.release(); }
 });
 
 r.get('/status', async (_req, res, next) => {

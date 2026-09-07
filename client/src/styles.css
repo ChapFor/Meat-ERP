@@ -129,6 +129,70 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 .floorsub .fo { color: #8fa39b; }
 .floorsub .fnote { color: #ffd98a; font-weight: 700; }
 
+/* The wall display owns the whole window; the 860px reading column is for the
+   office pages. :has() is pure enhancement — a browser without it just keeps
+   the old centred layout rather than breaking. */
+body:has(.floor) main { max-width: none; padding: 0; }
+body:has(.floor) .floor { margin: 0; }
+
+/* Two columns: everything due NOW on the left, Upcoming on the right.
+   One column on a narrow screen — the office laptop, not the wall. */
+.floorcols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 28px;
+  align-items: start; }
+.floorcol { min-width: 0; }
+@media (max-width: 900px) { .floorcols { grid-template-columns: 1fr; } }
+.floornothing { color: #6f7d78; font-size: 19px; padding: 18px 4px 6px; font-style: italic; }
+
+/* New orders flash for their five server-side minutes, then stop on their own. */
+@keyframes floornew {
+  0%, 100% { background: #14181a; }
+  50%      { background: #7a5a08; }
+}
+@keyframes floornewsub {
+  0%, 100% { background: #191f21; }
+  50%      { background: #7a5a08; }
+}
+.floorrow.isnew td { animation: floornew 1s ease-in-out infinite; }
+.floorsub.isnew td { animation: floornewsub 1s ease-in-out infinite; }
+.floorrow.isnew:hover td { animation: floornew 1s ease-in-out infinite; }
+.floorflag.new { background: #f0b429; color: #241a02; }
+.floornewcount { margin-left: 18px; font-size: 20px; font-weight: 900; color: #241a02;
+  background: #f0b429; border-radius: 999px; padding: 2px 12px; letter-spacing: .06em;
+  text-transform: uppercase; animation: floornewpulse 1s ease-in-out infinite; }
+@keyframes floornewpulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  .floorrow.isnew td, .floorrow.isnew:hover td { animation: none; background: #6b4f07; }
+  .floorsub.isnew td { animation: none; background: #6b4f07; }
+  .floornewcount { animation: none; }
+}
+
+/* Customer priority strip. Chips are dragged with pointer events so a finger on
+   the wall tablet works exactly like a mouse. */
+.floorpri { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 10px 0 4px; padding: 8px 0; border-bottom: 1px solid #262e31; }
+.prilabel { font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
+  color: #6f7d78; font-weight: 800; }
+.prilabel.rank { color: #8fa39b; }
+.prinone { font-size: 15px; color: #6f7d78; font-style: italic; }
+.prichip { display: inline-flex; align-items: center; gap: 8px; background: #232b2e;
+  border: 1px solid #36423f; border-radius: 999px; padding: 5px 8px 5px 6px;
+  font-size: 17px; font-weight: 700; color: #e6ede9; cursor: grab;
+  touch-action: none; user-select: none; -webkit-user-select: none; }
+.prichip.un { background: #1a2022; border-color: #2a3336; color: #8d9c97; opacity: .72; }
+.prichip.dragging { cursor: grabbing; opacity: .9; z-index: 5; position: relative;
+  box-shadow: 0 6px 18px #0009; }
+.prichip.dropbefore { box-shadow: inset 4px 0 0 #f0b429; }
+.prichip.dropafter { box-shadow: inset -4px 0 0 #f0b429; }
+.prirank { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 24px; border-radius: 999px; background: #3d4a46;
+  color: #cfe0d8; font-size: 13px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.priname { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prix { background: none; border: none; color: #7f8f89; font-size: 18px; line-height: 1;
+  padding: 0 4px; font-weight: 900; }
+.prix:hover { color: #f0b429; }
+.prierr { font-size: 15px; font-weight: 800; color: #ffb4a8; background: #4a1414;
+  border-radius: 6px; padding: 3px 10px; }
+
 /* shell switch: plant terminal vs office */
 .shellswitch { display: flex; gap: 2px; background: #2b3330; border-radius: 999px; padding: 2px; }
 .shellswitch button { background: none; border: none; color: #9db4a8; font-size: 11px;

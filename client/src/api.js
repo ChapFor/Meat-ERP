@@ -16,5 +16,6 @@ async function req(path, opts = {}) {
 export const api = {
   get: (p) => req(p),
   post: (p, body) => req(p, { method: 'POST', body }),
+  put: (p, body) => req(p, { method: 'PUT', body }),
   patch: (p, body) => req(p, { method: 'PATCH', body }),
 };

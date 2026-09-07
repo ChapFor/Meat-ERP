@@ -92,11 +92,26 @@ export function parseTable(html, must = []) {
       const cells = $cells.toArray().map((c) => norm($(c).text()));
       if (cells.every((c) => !c)) continue;
 
+      // What a person SEES in a cell. The Customer cell stacks three things:
+      // an invisible sort key (<font style="font-size:0px">Creamery Moo Cow</font>),
+      // the display name, and 8px phone lines (P: / M:). text() welds them into
+      // "Creamery Moo Cow Moo Cow Creamery P: (240) …", so the hidden and the
+      // fine-print parts are dropped first. Falls back to the whole cell.
+      const visible = (cell) => {
+        const $c = $(cell).clone();
+        $c.find('[style]').each((_, el) => {
+          const m = /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/i.exec($(el).attr('style') || '');
+          if (m && Number(m[1]) <= 9) $(el).remove();
+        });
+        return norm($c.text()) || norm($(cell).text());
+      };
+
       const $form = $tr.find('form').first();
       rows.push({
         cells,
         attrs: $tr.attr() || {},
         get: (want) => { const i = at(want); return i >= 0 ? (cells[i] ?? null) : null; },
+        seen: (want) => { const i = at(want); return i >= 0 ? (visible($cells.get(i)) || null) : null; },
         // Opening an order is a form POST, not a link.
         form: $form.length ? {
           action: $form.attr('action') || null,
@@ -159,7 +174,8 @@ export function parseOrderList(html) {
     return {
       order_no: r.get('Shopper'),
       created_text: r.get('Created'),
-      customer: r.get('Customer'),
+      // the display name only — the priority strip and the floor show this
+      customer: r.seen('Customer'),
       items_packed: items.packed,
       items_total: items.total,
       pre_items: items.pre_items,

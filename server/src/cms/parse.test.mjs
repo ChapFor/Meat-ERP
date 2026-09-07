@@ -23,13 +23,22 @@ const openForm = (id, tag) => `<th><form name="updateform1" method="POST" action
   <input type="hidden" name="retail_tagnum" value="${tag}">
   <button type="submit"></button></form></th>`;
 
+// The real Customer cell: an invisible sort key, the display name, then phone
+// lines in 8px print. Only "Moo Cow Creamery" is what a person sees.
+const customerCell = `<td nowrap style="border-bottom:1px dashed #999;">
+   <font style="font-size:0px;">Creamery Moo Cow<br></font>
+   Moo Cow Creamery
+<div style="font-size:8px;">P: (240) 367-7568</div>
+<div style="font-size:8px;">M: (240) 367-7568</div>
+   </td>`;
+
 const listHtml = `<table>
  <tr class="altbluetable"><th>Open</th><th>Shopper</th><th>Created</th><th>Customer</th>
    <th>Active Items</th><th>Notes/Comments</th><th>Requested By Date</th>
    <th>Pick Up Method</th><th>Order Status</th><th></th></tr>
  <tr class="bluetable" data-status="Active">
    ${openForm('1957220', '333')}
-   <td>333</td><td>20260911 09/11/20267:14PM</td><td>Moo Cow Creamery</td>
+   <td>333</td><td>20260911 09/11/20267:14PM</td>${customerCell}
    <td>0 of 0 PreItems: 6</td><td>Moo Cow Label 10 lbs liver</td>
    <td>20260911 09/11/2026</td><td>Checkout Pickup</td><th>Active $0.00</th><th></th></tr>
  <tr class="bluetable" data-status="Picked Up">
@@ -44,6 +53,8 @@ const orders = parseOrderList(listHtml);
 chk('spacer row ignored', orders.length, 2);
 chk('order number from the right column', orders[0].order_no, '333');
 chk('customer not shifted by the th/td mix', orders[0].customer, 'Moo Cow Creamery');
+chk('customer is the visible name, not sort key + phones', orders[0].customer, 'Moo Cow Creamery');
+chk('a plain customer cell still reads whole', orders[1].customer, 'Dabney');
 chk('status from data-status', orders[0].status, 'Active');
 chk('status strips the order total', orders[1].status, 'Picked Up');
 chk('Active filter', orders.filter((o) => isActive(o.status)).length, 1);
@@ -58,8 +69,8 @@ chk('retail_id surfaced', orders[0].retail_id, '1957220');
 // header-driven: a reordered or inserted column must not shift anything
 const moved = listHtml
   .replace('<th>Created</th><th>Customer</th>', '<th>Customer</th><th>Created</th>')
-  .replace('<td>20260911 09/11/20267:14PM</td><td>Moo Cow Creamery</td>',
-           '<td>Moo Cow Creamery</td><td>20260911 09/11/20267:14PM</td>');
+  .replace(`<td>20260911 09/11/20267:14PM</td>${customerCell}`,
+           `${customerCell}<td>20260911 09/11/20267:14PM</td>`);
 chk('survives reordered columns', parseOrderList(moved)[0].customer, 'Moo Cow Creamery');
 
 // --- order lines ----------------------------------------------------------
