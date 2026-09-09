@@ -62,6 +62,11 @@
   CHECKING IT
 --------------------------------------------------------------------
 
+  The sync runs invisibly - the task launches it through
+  run-sync-hidden.vbs so no black CMD window appears on the desktop
+  every five minutes. Seeing nothing happen is the normal, working
+  state; the log is how you check on it.
+
   sync.log in this folder gets a line per run, newest at the bottom:
 
       Fri 09/07/2026 08:31:02.11  sync ok

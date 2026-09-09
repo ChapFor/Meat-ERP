@@ -18,12 +18,16 @@ echo       DATABASE_URL   ^(the Railway Postgres URL^)
 echo.
 pause
 
-schtasks /create /tn "Chapel Ford CMS Sync" /tr "\"%HERE%run-sync.bat\"" /sc minute /mo 5 /f
+rem Launched through run-sync-hidden.vbs, not the .bat directly: a .bat action
+rem flashes a CMD window on the desktop every five minutes, which nobody wants
+rem on a PC somebody is actually using.
+schtasks /create /tn "Chapel Ford CMS Sync" /tr "wscript.exe //B //NoLogo \"%HERE%run-sync-hidden.vbs\"" /sc minute /mo 5 /f
 if errorlevel 1 goto failed
 
 echo.
 echo   Done. It runs every 5 minutes from now on, including
-echo   after a reboot once someone logs in.
+echo   after a reboot once someone logs in. Nothing appears
+echo   on screen while it runs.
 echo.
 echo   Watch it work:  sync.log  in this folder
 echo   Stop it later:  remove-farm-sync.bat
