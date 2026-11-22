@@ -77,7 +77,7 @@ let lot, products;
 before(async () => {
   assert.ok(DB, 'set TEST_DATABASE_URL');
   const c = new pg.Client({ connectionString: DB }); await c.connect();
-  await c.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;'); await c.end();
+  await c.query('DROP SCHEMA IF EXISTS erp_v2 CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;'); await c.end();
   await new Promise((r) => mock.listen(MOCK_PORT, r));
 
   const env = { ...process.env, DATABASE_URL: DB, PORT: '3101', APP_PASSCODE: PASS, QBO_CLIENT_ID: 'x', QBO_CLIENT_SECRET: 'y',
@@ -88,7 +88,7 @@ before(async () => {
   await waitFor(async () => (await fetch(SERVER + '/api/health')).ok);
 
   const db = new pg.Client({ connectionString: DB }); await db.connect();
-  await db.query(`INSERT INTO qbo_connection (realm_id, access_token, refresh_token, access_expires) VALUES ('123','a','r', now() + interval '1 day')`);
+  await db.query(`INSERT INTO erp_v2.qbo_connection (realm_id, access_token, refresh_token, access_expires) VALUES ('123','a','r', now() + interval '1 day')`);
   await db.end();
 
   products = {

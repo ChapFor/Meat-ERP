@@ -27,8 +27,8 @@ invoicing in QuickBooks Online.
 4. Open the app → Office → QuickBooks → **Connect to QuickBooks**.
 5. Office → Items: add your PLUs (tare, min/max weight, shelf life) and link each to its QuickBooks item.
 
-v2 uses a **new database**. Point `DATABASE_URL` at a fresh Postgres (do not
-reuse the v1 database). Labels printed by v1 still scan.
+v2 keeps its tables in its own Postgres schema (`erp_v2`), so it can use the
+same database as v1 without touching v1's data. Labels printed by v1 still scan.
 
 ## Station PC setup
 See `station/agent/README.txt`.

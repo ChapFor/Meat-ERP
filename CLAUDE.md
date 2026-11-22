@@ -58,6 +58,9 @@ serial suffix only. Serial = `{lot}-{4-digit suffix}`; suffixes are leased per l
 scanners that drop FNC1, and the pre-2026-08 full encoding. Keep it that way.
 
 ## Conventions
+- All v2 tables live in Postgres schema `erp_v2` (`DB_SCHEMA`); every pooled
+  connection sets `search_path` to it. v1's tables and its `schema_migrations`
+  ledger stay in `public`, untouched, so v2 can run on the v1 database.
 - Migrations: numbered files in `server/migrations/`, additive, never edited
   after running; applied on boot. Tell the user when a change adds one.
 - Weights in lb. Dates of lots are the plant's local day (`PLANT_TZ`, default America/New_York).
