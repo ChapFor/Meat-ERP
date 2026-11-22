@@ -18,6 +18,22 @@ const SHELLS = {
 };
 const PAGES = { station: Station, ship: Ship, lookup: Lookup, orders: Orders, inventory: Inventory, items: Items, lots: Lots, qbo: QuickBooks };
 
+// A crash in one page shows its error instead of blanking the whole app.
+class PageBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidUpdate(prev) { if (prev.page !== this.props.page && this.state.error) this.setState({ error: null }); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="notice bad">
+        <b>This screen hit an error:</b> {String(this.state.error.message || this.state.error)}
+        <div style={{ marginTop: 8 }}><button className="btn" onClick={() => this.setState({ error: null })}>Try again</button></div>
+      </div>
+    );
+  }
+}
+
 function Login({ onOk }) {
   const [p, setP] = useState('');
   const [err, setErr] = useState(null);
@@ -70,7 +86,7 @@ export default function App() {
           {['plant', 'admin'].map((s) => <button key={s} className={s === shell ? 'on' : ''} onClick={() => setShell(s)}>{s === 'plant' ? 'Plant' : 'Office'}</button>)}
         </div>
       </header>
-      <main><Page go={setTab} /></main>
+      <main><PageBoundary page={current}><Page go={setTab} /></PageBoundary></main>
     </>
   );
 }

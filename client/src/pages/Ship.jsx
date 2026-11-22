@@ -20,7 +20,7 @@ export default function Ship() {
   const loadList = () => api.get('/api/orders?status=OPEN').then(setOrders).catch(() => {});
   useEffect(() => { loadList(); }, []);
   const focus = () => setTimeout(() => input.current?.focus(), 0);
-  useEffect(focus);
+  useEffect(() => { focus(); });
 
   const open = async (id) => {
     try { setOrder(await api.get(`/api/orders/${id}`)); setMsg(null); setShort(null); setDone(null); }
