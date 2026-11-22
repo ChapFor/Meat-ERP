@@ -1,73 +1,67 @@
 import express from 'express';
-import cors from 'cors';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { loadEnv } from './env.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { migrate } from './migrate.js';
-
-// server/.env for local runs; on Railway the real environment already has these
-// and loadEnv never overwrites what is already set.
-loadEnv();
+import { HttpError } from './util.js';
 import products from './routes/products.js';
-import customers from './routes/customers.js';
 import lots from './routes/lots.js';
+import station from './routes/station.js';
 import cases from './routes/cases.js';
 import orders from './routes/orders.js';
-import scan from './routes/scan.js';
-import reports from './routes/reports.js';
-import batches from './routes/batches.js';
+import { api as qboApi, callback as qboCallback } from './routes/qbo.js';
+import { startSyncLoop } from './qbo/sync.js';
 
 const app = express();
-const origins = (process.env.CORS_ORIGINS || '').split(',').filter(Boolean);
-app.use(cors(origins.length ? { origin: origins } : {}));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
-app.use('/api/products', products);
-app.use('/api/customers', customers);
-app.use('/api/lots', lots);
-app.use('/api/cases', cases);
-app.use('/api/orders', orders);
-app.use('/api/scan', scan);
-app.use('/api/reports', reports);
-app.use('/api/batches', batches);
-
-// The CMS cut list is an optional office integration that reaches a third-party
-// site and pulls in an HTML parser. Load it defensively: if anything about it
-// fails to import, the floor terminal, scan-in and packing must still come up.
-// Imported one at a time and each guarded on its own. A previous version loaded
-// both with Promise.all inside a single try; the failure still escaped and took
-// the process down, so nothing here relies on a shared catch any more.
-let startCmsSync = () => console.warn('cms: integration not loaded');
-let cmsRoutes = null;
-try { cmsRoutes = (await import('./routes/cms.js')).default; }
-catch (e) { console.error(`cms: routes unavailable (${e.message})`); }
-try { startCmsSync = (await import('./cms/sync.js')).startCmsSync; }
-catch (e) { console.error(`cms: sync unavailable (${e.message})`); }
-
-if (cmsRoutes) app.use('/api/cms', cmsRoutes);
-else {
-  console.error('cms: serving 503 for /api/cms — the rest of the ERP is unaffected');
-  app.use('/api/cms', (_req, res) =>
-    res.status(503).json({ error: 'the CMS integration failed to load on this server' }));
-}
-
-// serve built client in production
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dist = path.join(__dirname, '../../client/dist');
-app.use(express.static(dist));
-app.get(/^\/(?!api).*/, (_req, res) => res.sendFile(path.join(dist, 'index.html'), () => {}));
-
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(err.status || 500).json({ error: err.message || 'server error' });
+// The station agent runs at http://localhost:9410 and the browser page is served
+// from here; only the agent needs cross-origin access, and it sends the passcode.
+app.use('/api', (req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Passcode');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
 });
 
-// Migrate before serving: a half-migrated schema would fail in confusing ways
-// on the plant floor, so refuse to come up instead.
+const PASS = process.env.APP_PASSCODE || '';
+if (!PASS) console.warn('APP_PASSCODE is not set — the API is open to anyone. Set it before connecting QuickBooks.');
+const passOk = (given) => !PASS || (given && given.length === PASS.length &&
+  crypto.timingSafeEqual(Buffer.from(given), Buffer.from(PASS)));
+
+app.get('/api/health', (req, res) => res.json({ ok: true, auth: !!PASS }));
+app.post('/api/login', (req, res) => (passOk(String(req.body.passcode || ''))
+  ? res.json({ ok: true }) : res.status(401).json({ error: 'wrong passcode' })));
+app.use('/api', (req, res, next) => (passOk(req.get('X-Passcode') || '') ? next() : res.status(401).json({ error: 'passcode required' })));
+
+app.use('/api/products', products);
+app.use('/api/lots', lots);
+app.use('/api/station', station);
+app.use('/api/cases', cases);
+app.use('/api/orders', orders);
+app.use('/api/qbo', qboApi);
+app.use('/qbo', qboCallback);
+app.use('/api', (req, res) => res.status(404).json({ error: 'no such endpoint' }));
+
+const dist = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'client', 'dist');
+if (fs.existsSync(dist)) {
+  app.use(express.static(dist));
+  app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
+}
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const status = err instanceof HttpError ? err.status : (err.status || 500);
+  if (status >= 500) console.error(err);
+  res.status(status).json({ error: err.message, ...(err.extra || {}) });
+});
+
 const port = process.env.PORT || 3001;
 migrate()
-  .then(() => app.listen(port, () => {
-    console.log(`meat-erp api on :${port}`);
-    startCmsSync();          // no-op until CMS credentials are set
-  }))
-  .catch((e) => { console.error(`startup aborted — ${e.message}`); process.exit(1); });
+  .then(() => {
+    app.listen(port, () => console.log(`ERP server on :${port}`));
+    startSyncLoop();
+  })
+  .catch((e) => { console.error('startup failed:', e.message); process.exit(1); });

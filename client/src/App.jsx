@@ -1,68 +1,76 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { api, passcode } from './api.js';
 import Station from './pages/Station.jsx';
-import ScanIn from './pages/ScanIn.jsx';
-import Inventory from './pages/Inventory.jsx';
+import Ship from './pages/Ship.jsx';
+import Lookup from './pages/Lookup.jsx';
 import Orders from './pages/Orders.jsx';
-import Packing from './pages/Packing.jsx';
-import Customers from './pages/Customers.jsx';
+import Inventory from './pages/Inventory.jsx';
 import Items from './pages/Items.jsx';
-import Batches from './pages/Batches.jsx';
-import Floor from './pages/Floor.jsx';
-import CutList from './pages/CutList.jsx';
+import Lots from './pages/Lots.jsx';
+import QuickBooks from './pages/QuickBooks.jsx';
 
-const ALL = {
-  Floor, Station, 'Scan in': ScanIn, Inventory, Batches, Orders, Packing,
-  Customers, Items, 'Cut list': CutList,
-};
-
-// Two shells for two jobs. Plant is the floor terminal: produce, scan, pack —
-// no costing and no master data. Admin is the office and sees everything.
-// This is a display split, NOT a security boundary — there is no auth yet, so
-// the API still serves costs to anyone who asks. Revisit when the shared
-// passcode lands.
+// Plant = floor terminals; Admin = office. A display split for convenience —
+// both use the same passcode.
 const SHELLS = {
-  plant: ['Floor', 'Station', 'Scan in', 'Inventory', 'Packing'],
-  admin: Object.keys(ALL),
+  plant: [['station', 'Label'], ['ship', 'Ship / Pack to order'], ['lookup', 'Lookup / Void']],
+  admin: [['orders', 'Orders'], ['inventory', 'Inventory'], ['items', 'Items'], ['lots', 'Lots'], ['qbo', 'QuickBooks'],
+    ['station', 'Label'], ['ship', 'Ship'], ['lookup', 'Lookup']],
 };
+const PAGES = { station: Station, ship: Ship, lookup: Lookup, orders: Orders, inventory: Inventory, items: Items, lots: Lots, qbo: QuickBooks };
+
+function Login({ onOk }) {
+  const [p, setP] = useState('');
+  const [err, setErr] = useState(null);
+  const submit = async (e) => {
+    e.preventDefault();
+    try { await api.post('/api/login', { passcode: p }); passcode.set(p); onOk(); }
+    catch { setErr('Wrong passcode'); }
+  };
+  return (
+    <form className="panel login" onSubmit={submit}>
+      <h2>Chapel Ford ERP</h2>
+      <input className="txt" type="password" autoFocus placeholder="Passcode" value={p} onChange={(e) => setP(e.target.value)} style={{ width: '100%' }} />
+      {err && <div className="notice bad" style={{ marginTop: 10 }}>{err}</div>}
+      <button className="btn primary" style={{ width: '100%', marginTop: 10 }}>Sign in</button>
+    </form>
+  );
+}
 
 export default function App() {
-  const [shell, setShell] = useState(() =>
-    SHELLS[localStorage.getItem('cf_shell')] ? localStorage.getItem('cf_shell') : 'admin');
+  const [authed, setAuthed] = useState(null);
+  const [shell, setShell] = useState(localStorage.getItem('cf_shell') || 'plant');
+  const [tab, setTab] = useState(localStorage.getItem('cf_tab') || 'station');
+
+  useEffect(() => {
+    api.get('/api/products').then(() => setAuthed(true)).catch((e) => setAuthed(e.status === 401 ? false : true));
+    const out = () => setAuthed(false);
+    window.addEventListener('cf-logout', out);
+    return () => window.removeEventListener('cf-logout', out);
+  }, []);
+  useEffect(() => { localStorage.setItem('cf_shell', shell); localStorage.setItem('cf_tab', tab); }, [shell, tab]);
+  useEffect(() => {
+    // returning from QuickBooks sign-in
+    const p = new URLSearchParams(location.search);
+    if (p.has('qbo') || p.has('qbo_error')) { setShell('admin'); setTab('qbo'); }
+  }, []);
+
+  if (authed === null) return null;
+  if (!authed) return <Login onOk={() => setAuthed(true)} />;
+
   const tabs = SHELLS[shell];
-
-  const [page, setPage] = useState(() => {
-    const saved = localStorage.getItem('cf_page');
-    return saved && SHELLS[localStorage.getItem('cf_shell') || 'admin']?.includes(saved)
-      ? saved : 'Station';
-  });
-
-  const go = (p) => { if (tabs.includes(p)) { setPage(p); localStorage.setItem('cf_page', p); } };
-  const switchShell = (s) => {
-    setShell(s); localStorage.setItem('cf_shell', s);
-    if (!SHELLS[s].includes(page)) go2(SHELLS[s][0], s);
-  };
-  const go2 = (p, s) => { setPage(p); localStorage.setItem('cf_page', p); };
-
-  const Page = ALL[tabs.includes(page) ? page : tabs[0]];
+  const current = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
+  const Page = PAGES[current];
   return (
     <>
-      <header className="topbar">
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div className="brand"><h1>Chapel Ford</h1><span>Meat ERP</span></div>
-          <div className="shellswitch">
-            {['plant', 'admin'].map((s) => (
-              <button key={s} className={s === shell ? 'on' : ''}
-                onClick={() => switchShell(s)}>{s}</button>
-            ))}
-          </div>
+      <header className="top">
+        <span className="brand">Chapel Ford ERP</span>
+        <nav>{tabs.map(([k, label]) => <button key={k} className={k === current ? 'on' : ''} onClick={() => setTab(k)}>{label}</button>)}</nav>
+        <span className="spacer" />
+        <div className="shell">
+          {['plant', 'admin'].map((s) => <button key={s} className={s === shell ? 'on' : ''} onClick={() => setShell(s)}>{s === 'plant' ? 'Plant' : 'Office'}</button>)}
         </div>
-        <nav className="tabs">
-          {tabs.map((p) => (
-            <button key={p} className={p === page ? 'on' : ''} onClick={() => go(p)}>{p}</button>
-          ))}
-        </nav>
       </header>
-      <main><Page go={go} shell={shell} /></main>
+      <main><Page go={setTab} /></main>
     </>
   );
 }

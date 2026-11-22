@@ -1,161 +1,82 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-const UNITS = ['lb', 'case', 'each'];
-const BLANK = { code: '', name: '', unit: 'lb' };
+const EMPTY = { code: '', name: '', label_name: '', tare_lb: '0', min_lb: '', max_lb: '', shelf_life_days: '', qbo_item_id: '' };
 
+// Products (PLUs) and their link to QuickBooks items. A QuickBooks item whose
+// SKU equals the PLU links itself.
 export default function Items() {
   const [items, setItems] = useState([]);
-  const [query, setQuery] = useState('');
-  const [showInactive, setShowInactive] = useState(false);
-  const [form, setForm] = useState(BLANK);
-  const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [edit, setEdit] = useState(BLANK);
-  const [saving, setSaving] = useState(false);
-  const [stamp, setStamp] = useState(null);
+  const [qboItems, setQboItems] = useState(null);
+  const [edit, setEdit] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => api.get('/api/products').then(setItems);
+  useEffect(() => {
+    load();
+    api.get('/api/qbo/status').then((s) => s.connected && api.get('/api/qbo/items').then((q) => { setQboItems(q); load(); })).catch(() => {});
+  }, []);
 
-  const refresh = async () => {
+  const save = async () => {
+    setErr(null);
     try {
-      const rows = await api.get(`/api/products${showInactive ? '?all=1' : ''}`);
-      setItems(rows);
-      // the Station screen falls back to this cache when the cloud is unreachable
-      localStorage.setItem('cf_products_cache', JSON.stringify(rows.filter((p) => p.active)));
-    } catch (err) { setStamp({ kind: 'bad', title: 'COULD NOT LOAD', detail: err.message }); }
+      const qi = qboItems?.find((q) => q.id === edit.qbo_item_id);
+      const body = { ...edit, qbo_item_id: edit.qbo_item_id || null, qbo_item_name: qi?.name || (edit.qbo_item_id ? edit.qbo_item_name : null) };
+      delete body.id; delete body.in_stock; delete body.in_stock_lb; delete body.created_at;
+      if (edit.id) await api.put(`/api/products/${edit.id}`, body); else await api.post('/api/products', body);
+      setEdit(null); load();
+    } catch (e) { setErr(e.message); }
   };
-  useEffect(() => { refresh(); }, [showInactive]);
-
-  const add = async () => {
-    if (!form.code.trim() || !form.name.trim())
-      return setStamp({ kind: 'bad', title: 'MISSING FIELD', detail: 'Item code and name are both required.' });
-    setSaving(true);
-    try {
-      const p = await api.post('/api/products', form);
-      setStamp({ kind: 'ok', title: 'ITEM ADDED', detail: `${p.name} · code ${p.code} — now on the label station` });
-      setForm(BLANK); setAdding(false); await refresh();
-    } catch (err) {
-      setStamp({ kind: 'bad', title: 'NOT ADDED', detail: err.message });
-    } finally { setSaving(false); }
-  };
-
-  const saveEdit = async (id) => {
-    setSaving(true);
-    try {
-      await api.patch(`/api/products/${id}`, edit);
-      setStamp({ kind: 'ok', title: 'SAVED', detail: edit.name });
-      setEditing(null); await refresh();
-    } catch (err) {
-      setStamp({ kind: 'bad', title: 'NOT SAVED', detail: err.message });
-    } finally { setSaving(false); }
-  };
-
-  const setActive = async (p, active) => {
-    if (!active && !confirm(`Deactivate ${p.name}? It drops off the label station and order entry. Existing packs and cases keep their history.`)) return;
-    try { await api.patch(`/api/products/${p.id}`, { active }); await refresh(); }
-    catch (err) { setStamp({ kind: 'bad', title: 'NOT SAVED', detail: err.message }); }
-  };
-
-  const shown = items.filter((p) => {
-    const q = query.trim().toLowerCase();
-    return !q || p.name.toLowerCase().includes(q) || String(p.code).toLowerCase().includes(q);
-  });
+  const f = (k) => ({ value: edit[k] ?? '', onChange: (e) => setEdit({ ...edit, [k]: e.target.value }) });
 
   return (
-    <>
+    <div className="panel">
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <div className="eyebrow" style={{ margin: 0 }}>Items ({shown.length})</div>
-        <button className="btn" onClick={() => { setAdding(!adding); setStamp(null); }}>
-          {adding ? 'Close' : 'New item'}
-        </button>
+        <h2>Items</h2>
+        <button className="btn primary" onClick={() => setEdit({ ...EMPTY })}>Add item</button>
       </div>
-      <div className="eyebrow" style={{ marginTop: 4, letterSpacing: 0, textTransform: 'none', fontWeight: 400 }}>
-        The item code is the PLU printed into the barcode as AI (91). Every item here
-        appears in the label station's product list and on order entry.
-        <strong> $/lb</strong> is the market value used to allocate batch cost across
-        cut products — batch costing stays unallocated until every product in the
-        batch has one.
-      </div>
-
-      {adding && (
-        <div className="panel">
-          <div className="row">
-            <div className="field" style={{ maxWidth: 140 }}><label>Item code (PLU) *</label>
-              <input value={form.code} autoFocus placeholder="176"
-                onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div className="field"><label>Name *</label>
-              <input value={form.name} placeholder="Whole Chicken"
-                onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div className="field" style={{ maxWidth: 120 }}><label>Unit</label>
-              <select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
-                {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select></div>
+      {edit && (
+        <div className="panel" style={{ background: '#faf8f4' }}>
+          <div className="form-grid">
+            <label>PLU (digits)<input className="txt mono" {...f('code')} /></label>
+            <label>Name<input className="txt" {...f('name')} /></label>
+            <label>Name on label (optional)<input className="txt" {...f('label_name')} /></label>
+            <label>Tare lb (box + liner)<input className="txt mono" {...f('tare_lb')} /></label>
+            <label>Min net lb<input className="txt mono" {...f('min_lb')} /></label>
+            <label>Max net lb<input className="txt mono" {...f('max_lb')} /></label>
+            <label>Shelf life days<input className="txt mono" {...f('shelf_life_days')} /></label>
+            <label>QuickBooks item
+              {qboItems ? (
+                <select className="txt" {...f('qbo_item_id')}>
+                  <option value="">— not linked —</option>
+                  {qboItems.map((q) => <option key={q.id} value={q.id}>{q.name}{q.sku ? ` (SKU ${q.sku})` : ''}</option>)}
+                </select>
+              ) : <input className="txt" disabled value={edit.qbo_item_name || 'connect QuickBooks first'} />}
+            </label>
+            <label>Active
+              <select className="txt" value={edit.active === false ? 'no' : 'yes'} onChange={(e) => setEdit({ ...edit, active: e.target.value === 'yes' })}>
+                <option value="yes">yes</option><option value="no">no</option>
+              </select>
+            </label>
           </div>
-          <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" onClick={add} disabled={saving}>{saving ? 'Saving…' : 'Add item'}</button>
+          {err && <div className="notice bad" style={{ marginTop: 10 }}>{err}</div>}
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn primary" onClick={save}>Save</button>
+            <button className="btn" onClick={() => { setEdit(null); setErr(null); }}>Cancel</button>
           </div>
         </div>
       )}
-
-      {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
-
-      <div className="row" style={{ marginTop: 12 }}>
-        <div className="field"><input placeholder="Search items…" value={query}
-          onChange={(e) => setQuery(e.target.value)} autoComplete="off" /></div>
-        <label className="autotoggle">
-          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
-          Show deactivated
-        </label>
-      </div>
-
-      <div className="panel">
-        {shown.length === 0 ? <div className="empty">No items. Add one so the label station can print it.</div> : (
-          <table>
-            <thead><tr>
-              <th>Code</th><th>Name</th><th>Unit</th><th className="num">$/lb</th>
-              <th className="num">Packs</th><th></th>
-            </tr></thead>
-            <tbody>
-              {shown.map((p) => editing === p.id ? (
-                <tr key={p.id}>
-                  <td><input style={{ width: 80 }} value={edit.code}
-                    onChange={(e) => setEdit({ ...edit, code: e.target.value })} /></td>
-                  <td><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></td>
-                  <td><select value={edit.unit} onChange={(e) => setEdit({ ...edit, unit: e.target.value })}>
-                    {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select></td>
-                  <td><input style={{ width: 70 }} inputMode="decimal" placeholder="—"
-                    value={edit.market_value_per_lb}
-                    onChange={(e) => setEdit({ ...edit, market_value_per_lb: e.target.value })} /></td>
-                  <td className="num">{p.pack_count}</td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <button className="btn mini" onClick={() => saveEdit(p.id)} disabled={saving}>Save</button>{' '}
-                    <button className="btn secondary mini" onClick={() => setEditing(null)}>Cancel</button>
-                  </td>
-                </tr>
-              ) : (
-                <tr key={p.id} style={p.active ? undefined : { opacity: .5 }}>
-                  <td><span className="serial">{p.code}</span></td>
-                  <td>{p.name}{!p.active && <span className="chip VOID" style={{ marginLeft: 8 }}>INACTIVE</span>}</td>
-                  <td>{p.unit}</td>
-                  <td className="num">{p.market_value_per_lb === null || p.market_value_per_lb === undefined
-                    ? <span style={{ color: 'var(--bad)' }}>not set</span>
-                    : `$${Number(p.market_value_per_lb).toFixed(2)}`}</td>
-                  <td className="num">{p.pack_count}</td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <button className="btn secondary mini" onClick={() => {
-                      setEdit({ code: p.code, name: p.name, unit: p.unit,
-                        market_value_per_lb: p.market_value_per_lb ?? '' });
-                      setEditing(p.id); setStamp(null);
-                    }}>Edit</button>{' '}
-                    {p.active
-                      ? <button className="btn danger mini" onClick={() => setActive(p, false)}>Deactivate</button>
-                      : <button className="btn secondary mini" onClick={() => setActive(p, true)}>Reactivate</button>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </>
+      <table className="t">
+        <thead><tr><th>PLU</th><th>Name</th><th className="num">Tare</th><th className="num">Min–max</th><th className="num">Shelf life</th><th>QuickBooks item</th><th className="num">In stock</th></tr></thead>
+        <tbody>{items.map((p) => (
+          <tr key={p.id} className="click" onClick={() => setEdit({ ...p, tare_lb: String(p.tare_lb ?? 0) })} style={p.active ? {} : { opacity: 0.5 }}>
+            <td className="mono">{p.code}</td><td>{p.name}{p.label_name && <div className="muted">{p.label_name}</div>}</td>
+            <td className="num">{Number(p.tare_lb).toFixed(2)}</td>
+            <td className="num">{p.min_lb ?? '—'}–{p.max_lb ?? '—'}</td>
+            <td className="num">{p.shelf_life_days ? `${p.shelf_life_days} d` : '—'}</td>
+            <td>{p.qbo_item_name || <span className="chip warn">not linked</span>}</td>
+            <td className="num">{p.in_stock}</td>
+          </tr>))}</tbody>
+      </table>
+    </div>
   );
 }

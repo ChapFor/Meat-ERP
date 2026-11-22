@@ -1,64 +1,77 @@
 import { Router } from 'express';
-import { q } from '../db.js';
+import { q, tx } from '../db.js';
+import { h, bad, conflict } from '../util.js';
+import { getOrder, orderLines, allocateScan, unallocateScan, CASE_SELECT } from '../domain.js';
+import { writeBack } from '../qbo/sync.js';
+
 const r = Router();
 
-r.get('/', async (req, res, next) => {
-  try {
-    const { rows } = await q(
-      `SELECT o.*, cu.name AS customer_name,
-        (SELECT json_agg(json_build_object(
-           'id', ol.id, 'product_id', ol.product_id, 'product_name', p.name,
-           'item_code', p.code, 'qty_cases', ol.qty_cases, 'qty_unit', ol.qty_unit,
-           'qty_lb', ol.qty_lb, 'notes', ol.notes,
-           -- packs are leaves; cases are the containers allocated to this line
-           'packed_packs', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
-              AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),
-           'packed_cases', (SELECT COUNT(*) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
-              AND EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),
-           'packed_lb', COALESCE((SELECT SUM(c.net_weight_lb) FROM cases c WHERE c.order_line_id = ol.id AND c.status IN ('ALLOCATED','SHIPPED')
-              AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id)),0)
-         ) ORDER BY ol.id)
-         FROM order_lines ol JOIN products p ON p.id = ol.product_id
-         WHERE ol.order_id = o.id) AS lines
-       FROM orders o JOIN customers cu ON cu.id = o.customer_id
-       WHERE ($1::order_status IS NULL OR o.status = $1::order_status)
-       ORDER BY o.ship_date NULLS LAST, o.id DESC LIMIT 200`,
-      [req.query.status || null]);
-    res.json(rows);
-  } catch (e) { next(e); }
-});
+r.get('/', h(async (req, res) => {
+  const status = req.query.status || 'OPEN';
+  const { rows } = await q(`
+    SELECT o.*,
+      (SELECT coalesce(sum(ceil(qty_ordered)),0)::int FROM order_lines WHERE order_id = o.id) AS cases_ordered,
+      (SELECT count(*)::int FROM cases c JOIN order_lines ol ON ol.id = c.order_line_id
+         WHERE ol.order_id = o.id AND c.status IN ('ALLOCATED','SHIPPED')) AS cases_packed,
+      (SELECT coalesce(sum(c.weight_lb),0) FROM cases c JOIN order_lines ol ON ol.id = c.order_line_id
+         WHERE ol.order_id = o.id AND c.status IN ('ALLOCATED','SHIPPED')) AS lb_packed,
+      (SELECT count(*)::int FROM order_lines WHERE order_id = o.id AND product_id IS NULL) AS unmapped_lines
+    FROM orders o
+    WHERE ($1 = 'ALL' OR o.status = $1)
+      AND ($1 = 'OPEN' OR o.created_at > now() - interval '90 days')
+    ORDER BY o.ship_date NULLS LAST, o.doc_number
+    LIMIT 500`, [status]);
+  res.json(rows);
+}));
 
-r.post('/', async (req, res, next) => {
-  const client = await (await import('../db.js')).pool.connect();
-  try {
-    const { customer_id, po_number, ship_date, notes, lines = [] } = req.body;
-    await client.query('BEGIN');
-    const { rows } = await client.query(
-      `INSERT INTO orders (customer_id, po_number, ship_date, notes)
-       VALUES ($1,$2,$3,$4) RETURNING *`, [customer_id, po_number, ship_date || null, notes]);
-    const order = rows[0];
-    for (const ln of lines) {
-      const unit = ln.qty_unit === 'case' ? 'case' : 'pack';
-      await client.query(
-        `INSERT INTO order_lines (order_id, product_id, qty_cases, qty_unit, qty_lb, notes)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [order.id, ln.product_id, ln.qty_cases || null, unit, ln.qty_lb || null, ln.notes || null]);
-    }
-    await client.query('COMMIT');
-    res.status(201).json(order);
-  } catch (e) { await client.query('ROLLBACK'); next(e); }
-  finally { client.release(); }
-});
+r.get('/:id', h(async (req, res) => {
+  const order = await getOrder({ query: q }, req.params.id);
+  const { rows: cases } = await q(`${CASE_SELECT} WHERE o.id = $1 AND c.status IN ('ALLOCATED','SHIPPED')
+                                   ORDER BY c.allocated_at`, [req.params.id]);
+  res.json({ ...order, cases });
+}));
 
-r.patch('/:id', async (req, res, next) => {
-  try {
-    const { status, ship_date, po_number, notes } = req.body;
-    const { rows } = await q(
-      `UPDATE orders SET status=COALESCE($2,status), ship_date=COALESCE($3,ship_date),
-        po_number=COALESCE($4,po_number), notes=COALESCE($5,notes)
-       WHERE id=$1 RETURNING *`,
-      [req.params.id, status, ship_date, po_number, notes]);
-    res.json(rows[0]);
-  } catch (e) { next(e); }
-});
+// Scan a case onto the order. Rejections come back as 409 with a reason.
+r.post('/:id/scan', h(async (req, res) => {
+  if (!req.body.scan) throw bad('scan is required');
+  res.json(await allocateScan(req.params.id, req.body.scan));
+}));
+
+r.post('/:id/unscan', h(async (req, res) => {
+  if (!req.body.scan) throw bad('scan is required');
+  res.json(await unallocateScan(req.params.id, req.body.scan));
+}));
+
+// Close the order: packed cases become SHIPPED and the weights go to QuickBooks.
+// A short order needs force=true (the operator confirmed shipping short).
+r.post('/:id/manifest', h(async (req, res) => {
+  const id = req.params.id;
+  await tx(async (db) => {
+    const o = (await db.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [id])).rows[0];
+    if (!o) throw bad('order not found');
+    if (o.status !== 'OPEN') throw conflict(`order is already ${o.status.toLowerCase()}`);
+    const lines = await orderLines(db, id);
+    const packed = lines.reduce((s, l) => s + l.cases_packed, 0);
+    if (!packed) throw conflict('nothing has been packed on this order');
+    const short = lines.filter((l) => l.cases_remaining > 0)
+      .map((l) => ({ item: l.product_name || l.item_name, ordered: Number(l.qty_ordered), packed: l.cases_packed, short: l.cases_remaining }));
+    if (short.length && !req.body.force) throw conflict(`order is short ${short.reduce((s, x) => s + x.short, 0)} cases`, { short });
+    await db.query(`WITH s AS (
+                      UPDATE cases c SET status = 'SHIPPED', shipped_at = now()
+                      FROM order_lines ol WHERE ol.id = c.order_line_id AND ol.order_id = $1 AND c.status = 'ALLOCATED'
+                      RETURNING c.id)
+                    INSERT INTO case_events (case_id, event, order_id) SELECT id, 'SHIPPED', $1 FROM s`, [id]);
+    await db.query(`UPDATE orders SET status = 'MANIFESTED', manifested_at = now(),
+                    qbo_writeback_status = CASE WHEN qbo_id IS NULL THEN NULL ELSE 'PENDING' END WHERE id = $1`, [id]);
+  });
+  const qbo = await writeBack(id);
+  res.json({ order: await getOrder({ query: q }, id), qbo });
+}));
+
+r.post('/:id/writeback', h(async (req, res) => {
+  const o = (await q('SELECT status FROM orders WHERE id = $1', [req.params.id])).rows[0];
+  if (o?.status !== 'MANIFESTED') throw conflict('only a manifested order can be written back');
+  res.json(await writeBack(req.params.id));
+}));
+
 export default r;

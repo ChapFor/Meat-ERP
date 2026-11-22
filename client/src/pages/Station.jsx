@@ -1,397 +1,205 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { bridge, bridgeUrl } from '../station/bridge.js';
-import { humanReadable, zplFieldData, offlineSerial } from '../station/gs1.js';
-import { fillLabel } from '../station/label.js';
-import { cloudDown, enqueue, flushQueue, loadQueue } from '../station/queue.js';
+import { agent, agentUrl } from '../agentClient.js';
+import { beepBad } from '../beep.js';
 
-const AUTO_MIN_LB = 1;    // auto-print ignores anything lighter
-const REARM_LB = 0.5;     // weight must drop below this before the next auto-print
-
-// local date, not toISOString() — UTC would roll to tomorrow mid-evening
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-const printsKey = () => 'cf_station_prints_' + todayISO();
-const loadPrints = () => JSON.parse(localStorage.getItem(printsKey()) || '[]');
-
+// The weigh-label station. Printing itself happens in the station agent on this
+// PC; this screen chooses what to print and shows the scale and results.
 export default function Station() {
-  const [products, setProducts] = useState(() => JSON.parse(localStorage.getItem('cf_products_cache') || '[]'));
-  const [itemCode, setItemCode] = useState(localStorage.getItem('cf_station_item') || '');
-  const [lot, setLot] = useState(() => JSON.parse(localStorage.getItem('cf_station_lot') || 'null'));
-  // Batches are opened in the office; the station picks one and prints into its
-  // lot. Cached so an offline run can still select the batch it was working on.
-  const [batches, setBatches] = useState(() => JSON.parse(localStorage.getItem('cf_batches_cache') || '[]'));
-  const [batchId, setBatchId] = useState(() => localStorage.getItem('cf_station_batch') || '');
-  const [stationId] = useState(() => localStorage.getItem('cf_station_id') || 'S1');
+  const [cfg, setCfg] = useState(null);
+  const [st, setSt] = useState(null);
+  const [agentErr, setAgentErr] = useState(null);
+  const [mode, setMode] = useState('inventory');
+  const [productId, setProductId] = useState(null);
+  const [lot, setLot] = useState('');
+  const [orderId, setOrderId] = useState('');
+  const [lineId, setLineId] = useState('');
+  const [auto, setAuto] = useState(true);
+  const [err, setErr] = useState(null);
+  const lastStampAt = useRef(0);
 
-  const [wt, setWt] = useState({ lb: null, stable: false, scaleConnected: false });
-  const [bridgeOk, setBridgeOk] = useState(null);   // null = unknown yet
-  const [health, setHealth] = useState(null);
-  const [cloudOk, setCloudOk] = useState(true);
-  const [queued, setQueued] = useState(loadQueue().length);
-  const [manualLb, setManualLb] = useState('');
-  const [auto, setAuto] = useState(false);
-  const [stamp, setStamp] = useState(null);
-  const [prints, setPrints] = useState(loadPrints());
-  const [addingItem, setAddingItem] = useState(false);
-  const [newItem, setNewItem] = useState({ code: '', name: '' });
-
-  const armedRef = useRef(true);
-  const printingRef = useRef(false);
-  const product = products.find((p) => p.code === itemCode);
-
-  // Open batches drive the lot now. Selecting one sets the lot the station
-  // prints into; if the cloud is down the cached list still lets a run continue.
-  const loadBatches = async () => {
-    const bs = await api.get('/api/batches?status=OPEN');
-    setBatches(bs);
-    localStorage.setItem('cf_batches_cache', JSON.stringify(bs));
-    return bs;
+  const loadCfg = async () => {
+    const c = await api.get('/api/station/config');
+    setCfg(c);
+    setLot((l) => l || c.lots[0]?.code || '');
   };
-  useEffect(() => {
-    loadBatches().catch(() => setCloudOk(false));
-    const t = setInterval(() => loadBatches().catch(() => {}), 20000);
-    return () => clearInterval(t);
-  }, []);
+  useEffect(() => { loadCfg().catch((e) => setErr(e.message)); }, []);
 
-  const batch = batches.find((b) => String(b.id) === String(batchId));
-  // the lot comes from the selected batch; keep the old shape the label needs
-  useEffect(() => {
-    if (!batch) return;
-    const l = { id: batch.lot_id, lot_code: batch.lot_code, pack_date: batch.pack_date };
-    setLot(l);
-    localStorage.setItem('cf_station_lot', JSON.stringify(l));
-  }, [batchId, batches.length]);
-
-  // a batch that closed while the station sat idle must not keep printing
-  useEffect(() => {
-    if (batchId && batches.length && !batch) {
-      setBatchId(''); setLot(null);
-      localStorage.removeItem('cf_station_batch');
-      localStorage.removeItem('cf_station_lot');
-      setStamp({ kind: 'warn', title: 'BATCH CLOSED',
-        detail: 'That batch is no longer open. Pick another one before printing.' });
-    }
-  }, [batches]);
-
-  // Products come from the cloud; the cache keeps the dropdown usable offline.
-  const loadProducts = async () => {
-    const ps = (await api.get('/api/products')).filter((p) => p.active !== false);
-    setProducts(ps);
-    localStorage.setItem('cf_products_cache', JSON.stringify(ps));
-    setCloudOk(true);
-    return ps;
-  };
-  useEffect(() => { loadProducts().catch(() => setCloudOk(false)); }, []);
-
-  // Add an item without leaving the station, then select it for this run.
-  const addItem = async () => {
-    const code = newItem.code.trim(), name = newItem.name.trim();
-    if (!code || !name)
-      return setStamp({ kind: 'bad', title: 'MISSING FIELD', detail: 'Item code and name are both required.' });
-    try {
-      const p = await api.post('/api/products', { code, name });
-      await loadProducts();
-      setItemCode(p.code);
-      localStorage.setItem('cf_station_item', p.code);
-      setNewItem({ code: '', name: '' });
-      setAddingItem(false);
-      setStamp({ kind: 'ok', title: 'ITEM ADDED', detail: `${p.name} · code ${p.code} — selected for this run` });
-    } catch (err) {
-      setStamp({ kind: 'bad', title: 'ITEM NOT ADDED', detail: err.message });
-    }
-  };
-
-  // live weight @ 400ms; bridge health @ 5s; queue flush @ 30s
+  // fast status poll so the weight display keeps up with the scale
   useEffect(() => {
     let alive = true;
-    const wtTimer = setInterval(async () => {
+    const tick = async () => {
       try {
-        const w = await bridge.weight();
-        if (alive) { setWt(w); setBridgeOk(true); }
-      } catch { if (alive) { setBridgeOk(false); setWt({ lb: null, stable: false }); } }
-    }, 400);
-    const healthTimer = setInterval(async () => {
-      try { const h = await bridge.health(); if (alive) setHealth(h); } catch { if (alive) setHealth(null); }
-    }, 5000);
-    const flushTimer = setInterval(async () => {
-      const n = await flushQueue(api);
-      if (alive) setQueued(n);
-    }, 30000);
-    return () => { alive = false; clearInterval(wtTimer); clearInterval(healthTimer); clearInterval(flushTimer); };
+        const s = await agent.status();
+        if (!alive) return;
+        setSt(s); setAgentErr(null);
+        if (s.stamp && s.stamp.at !== lastStampAt.current) {
+          if (lastStampAt.current && s.stamp.kind === 'bad') beepBad();
+          lastStampAt.current = s.stamp.at;
+        }
+      } catch (e) { if (alive) setAgentErr(e.message); }
+      if (alive) setTimeout(tick, 200);
+    };
+    tick();
+    return () => { alive = false; };
   }, []);
 
-  const pickBatch = (id) => {
-    setBatchId(id); setStamp(null);
-    if (id) localStorage.setItem('cf_station_batch', id);
-    else { localStorage.removeItem('cf_station_batch'); setLot(null); localStorage.removeItem('cf_station_lot'); }
-  };
-
-  const doPrint = async (weightLb) => {
-    if (printingRef.current) return;
-    if (!product || !lot) return setStamp({ kind: 'bad', title: 'NOT READY', detail: 'Pick a product and a batch first.' });
-    if (!weightLb || weightLb <= 0) return setStamp({ kind: 'bad', title: 'NO WEIGHT', detail: 'No stable weight on the scale.' });
-    printingRef.current = true;
-    try {
-      const payload = { item_code: product.code, lot_code: lot.lot_code, net_weight_lb: weightLb };
-      let serial, zfd, hr, caseId = null, offline = false;
-      try {
-        const c = await api.post('/api/cases', payload);
-        serial = c.serial; zfd = c.zpl_field_data; hr = c.human_readable; caseId = c.id;
-        setCloudOk(true);
-      } catch (err) {
-        if (!cloudDown(err)) throw err;                  // real rejection (bad item/lot)
-        offline = true; setCloudOk(false);
-        serial = offlineSerial(lot.lot_code, stationId);
-        const bc = { itemCode: product.code, weightLb, lotCode: lot.lot_code, serial };
-        zfd = zplFieldData(bc); hr = humanReadable(bc);
-        enqueue({ ...payload, serial });
-        setQueued(loadQueue().length);
-      }
-      const zpl = fillLabel({
-        productName: product.name, weightLb, packDate: lot.pack_date,
-        lotCode: lot.lot_code, serial, zplFieldData: zfd, humanReadable: hr,
-      });
-      let printed = true, printErr = null;
-      try { await bridge.print(zpl); }
-      catch (err) { printed = false; printErr = err.message; }
-
-      const rec = { serial, caseId, productName: product.name, itemCode: product.code,
-        lotCode: lot.lot_code, weightLb, zpl, at: Date.now(), printed };
-      const next = [rec, ...loadPrints()].slice(0, 200);
-      localStorage.setItem(printsKey(), JSON.stringify(next));
-      setPrints(next);
-      setStamp(printed
-        ? { kind: offline ? 'warn' : 'ok', title: offline ? 'PRINTED — OFFLINE' : 'PRINTED',
-            detail: `${product.name} · ${weightLb.toFixed(2)} lb · ${serial}${offline ? ' — upload queued' : ''}` }
-        : { kind: 'bad', title: 'PRINT FAILED', detail: `${printErr} — case ${serial} saved; use Reprint.` });
-    } catch (err) {
-      setStamp({ kind: 'bad', title: 'REJECTED', detail: err.message });
-    } finally {
-      printingRef.current = false;
-    }
-  };
-
-  // auto-print on stable weight, re-armed once the case is lifted off
+  // adopt whatever job the agent is already running (page reload)
   useEffect(() => {
-    if (wt.lb !== null && wt.lb < REARM_LB) armedRef.current = true;
-    if (auto && armedRef.current && wt.stable && wt.lb >= AUTO_MIN_LB && product && lot) {
-      armedRef.current = false;
-      doPrint(wt.lb);
+    if (st?.job && productId === null) {
+      setProductId(st.job.product_id); setLot(st.job.lot); setAuto(st.job.auto);
+      if (st.job.order_line_id) {
+        setMode('order'); setLineId(String(st.job.order_line_id));
+        const o = cfg?.orders.find((o) => o.lines.some((l) => l.id === st.job.order_line_id));
+        if (o) setOrderId(String(o.id));
+      }
     }
-  }, [wt]);
+  }, [st, cfg]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Packs printed for the current product+lot that are not in a case yet.
-  const openPacks = prints.filter((p) => !p.boxed && !p.voided && p.printed
-    && p.itemCode === product?.code && p.lotCode === lot?.lot_code);
-
-  // Close the case: group those packs into a container and print the case label.
-  // Needs the cloud — the container serial and the parent links are assigned
-  // server-side. The packs are individually labelled either way, so an offline
-  // run just means closing the case once the connection is back.
-  const closeCase = async () => {
-    if (!openPacks.length) return;
+  const apply = async (patch = {}) => {
+    const next = { productId, lot, lineId: mode === 'order' ? lineId : '', auto, ...patch };
+    setErr(null);
+    if (!next.productId || !next.lot) return;
     try {
-      const box = await api.post('/api/cases/container',
-        { child_serials: openPacks.map((p) => p.serial) });
-      const zpl = fillLabel({
-        productName: `CASE OF ${box.pack_count} - ${product.name}`,
-        weightLb: box.net_weight_lb, packDate: lot.pack_date,
-        lotCode: lot.lot_code, serial: box.serial,
-        zplFieldData: box.zpl_field_data, humanReadable: box.human_readable,
-      });
-      let printed = true, printErr = null;
-      try { await bridge.print(zpl); } catch (err) { printed = false; printErr = err.message; }
-
-      const boxedSerials = new Set(openPacks.map((p) => p.serial));
-      const rec = { serial: box.serial, caseId: box.id, productName: `CASE OF ${box.pack_count} - ${product.name}`,
-        itemCode: product.code, lotCode: lot.lot_code, weightLb: Number(box.net_weight_lb),
-        zpl, at: Date.now(), printed, boxed: true, isCase: true };
-      const next = [rec, ...loadPrints().map((p) =>
-        boxedSerials.has(p.serial) ? { ...p, boxed: true } : p)].slice(0, 200);
-      localStorage.setItem(printsKey(), JSON.stringify(next));
-      setPrints(next);
-      setStamp(printed
-        ? { kind: 'ok', title: 'CASE CLOSED',
-            detail: `${box.pack_count} packs · ${Number(box.net_weight_lb).toFixed(2)} lb · ${box.serial}` }
-        : { kind: 'bad', title: 'CASE LABEL NOT PRINTED', detail: `${printErr} — case ${box.serial} saved; use Reprint.` });
-    } catch (err) {
-      setStamp({ kind: 'bad', title: 'CASE NOT CLOSED',
-        detail: cloudDown(err) ? 'needs the cloud — packs are labelled, close the case when back online' : err.message });
-    }
+      await agent.setJob({ product_id: next.productId, lot_code: next.lot, order_line_id: next.lineId || null, auto: next.auto, refresh: patch.refresh });
+    } catch (e) { setErr(e.message); }
   };
 
-  const reprint = async (rec) => {
+  const newLot = async () => {
     try {
-      await bridge.print(rec.zpl);
-      setStamp({ kind: 'ok', title: 'REPRINTED', detail: `${rec.productName} · ${rec.serial}` });
-    } catch (err) { setStamp({ kind: 'bad', title: 'PRINT FAILED', detail: err.message }); }
+      const l = await api.post('/api/lots', {});
+      await loadCfg(); await agent.refresh().catch(() => {});
+      setLot(l.code); apply({ lot: l.code, refresh: true });
+    } catch (e) { setErr(e.message); }
   };
 
-  const voidCase = async (rec) => {
-    if (!confirm(`Void ${rec.serial}? Misprints must not be scanned in.`)) return;
-    try {
-      await api.post(`/api/cases/${rec.caseId}/void`, { reason: 'station misprint' });
-      const next = loadPrints().map((p) => p.serial === rec.serial ? { ...p, voided: true } : p);
-      localStorage.setItem(printsKey(), JSON.stringify(next));
-      setPrints(next);
-    } catch (err) { setStamp({ kind: 'bad', title: 'VOID FAILED', detail: err.message }); }
-  };
-
-  const scaleUp = bridgeOk && wt.scaleConnected;
-  const lb = wt.lb;
-  const dot = (on) => <span className={`dot ${on ? 'up' : 'down'}`} />;
+  const order = cfg?.orders.find((o) => String(o.id) === String(orderId));
+  const products = cfg?.products || [];
+  const productName = (id) => products.find((p) => p.id === id)?.name || 'Unmapped item';
+  const w = st?.weight;
+  const health = [
+    ['Agent', !agentErr, agentErr && `not running at ${agentUrl()} — start the station agent on this PC`],
+    ['Scale', st?.scale?.ok, st?.scale?.error], ['Printer', st?.printer?.ok, st?.printer?.error], ['Server', st?.server?.ok, st?.server?.error],
+  ];
 
   return (
-    <>
-      <div className="eyebrow">Weigh &amp; label station — {stationId}</div>
-      <div className="row statusrow">
-        <span className="statuschip">{dot(bridgeOk)} Bridge</span>
-        <span className="statuschip">{dot(scaleUp)} Scale{wt.sim ? ' (sim)' : ''}</span>
-        <span className="statuschip" title={health?.printer?.name || health?.printer?.host || ''}>
-          {dot(health?.printer?.reachable)} Printer{health?.printer?.sim ? ' (sim)' : ''}
-        </span>
-        <span className="statuschip">{dot(cloudOk)} Cloud</span>
-        {queued > 0 && <span className="chip PENDING">{queued} upload{queued > 1 ? 's' : ''} queued</span>}
-      </div>
-      {bridgeOk === false && (
-        <div className="stamp warn">BRIDGE NOT RUNNING
-          <small>Start the station bridge on this PC ({bridgeUrl()}) — run 2-start-station.bat. Manual weight entry still works.</small>
-        </div>
-      )}
-      {bridgeOk && health?.printer && !health.printer.reachable && (
-        <div className="stamp warn">PRINTER NOT READY
-          <small>{health.printer.error || 'the printer is not responding'}
-            {health.printer.mode === 'usb' && health.printer.name ? ` · looking for "${health.printer.name}"` : ''}
-          </small>
-        </div>
-      )}
-      {bridgeOk && scaleUp === false && health?.scale?.error && (
-        <div className="stamp warn">SCALE NOT READY<small>{health.scale.error}</small></div>
-      )}
-
-      <div className="panel">
-        <div className="row">
-          <div className="field">
-            <label>Product</label>
-            <select value={itemCode} onChange={(e) => { setItemCode(e.target.value); localStorage.setItem('cf_station_item', e.target.value); }}>
-              <option value="">{products.length ? 'Select product…' : 'No items yet — add one →'}</option>
-              {products.map((p) => <option key={p.code} value={p.code}>{p.name} ({p.code})</option>)}
-            </select>
+    <div className="grid2">
+      <div>
+        <div className="panel">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <div className="row">{health.map(([n, ok, e]) => <span key={n} className={`chip ${ok ? 'ok' : 'bad'}`} title={e || ''}>{n}</span>)}</div>
+            {st?.timing && <span className="muted mono" title="stable weight → label sent to printer">print {st.timing.last} ms · median {st.timing.median} ms</span>}
           </div>
-          <button className="btn secondary" style={{ alignSelf: 'flex-end' }}
-            onClick={() => { setAddingItem(!addingItem); setStamp(null); }}>
-            {addingItem ? 'Cancel' : '+ New item'}
-          </button>
+          {health.filter(([, ok, e]) => !ok && e).map(([n, , e]) => <div key={n} className="notice bad" style={{ marginTop: 8 }}>{n}: {e}</div>)}
+          <div className={`weight ${w?.stable ? '' : 'unstable'}`}>
+            {w?.net != null ? w.net.toFixed(2) : '—.——'} <small>lb {w?.stable ? 'STABLE' : 'settling'}</small>
+          </div>
+          {st?.job && <div className="muted" style={{ textAlign: 'center' }}>gross {w?.gross?.toFixed(2) ?? '—'} − tare {Number(st.job.tare_lb).toFixed(2)}</div>}
+          {st?.stamp && Date.now() - st.stamp.at < 20000 && (
+            <div className={`stamp ${st.stamp.kind}`}><div className="title">{st.stamp.title}</div><div className="detail">{st.stamp.detail}</div></div>
+          )}
+          <div className="row" style={{ justifyContent: 'center' }}>
+            <button className="btn primary big" disabled={!st?.job || !w?.stable} onClick={() => agent.print().catch((e) => setErr(e.message))}>Print now</button>
+            <label className="row"><input type="checkbox" checked={auto} onChange={(e) => { setAuto(e.target.checked); apply({ auto: e.target.checked }); }} /> Auto-print when stable</label>
+          </div>
+          {st?.job?.line && (
+            <div className="notice ok" style={{ marginTop: 10, textAlign: 'center', fontSize: 20 }}>
+              {st.job.order.customer_name} · {st.job.line.packed} of {st.job.line.ordered} cases · <b>{st.job.line.remaining} to go</b>
+            </div>
+          )}
+          {err && <div className="notice bad" style={{ marginTop: 10 }}>{err}</div>}
         </div>
 
-        {addingItem && (
-          <div className="row" style={{ marginTop: 8 }}>
-            <div className="field" style={{ maxWidth: 150 }}>
-              <label>Item code (PLU)</label>
-              <input value={newItem.code} autoFocus placeholder="176"
-                onChange={(e) => setNewItem({ ...newItem, code: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>Name</label>
-              <input value={newItem.name} placeholder="Whole Chicken"
-                onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} />
-            </div>
-            <button className="btn" onClick={addItem} style={{ alignSelf: 'flex-end' }}>Add item</button>
-          </div>
-        )}
-
-        <div className="row" style={{ marginTop: 8 }}>
-          <div className="field">
-            <label>Batch</label>
-            <select value={batchId} onChange={(e) => pickBatch(e.target.value)}>
-              <option value="">
-                {batches.length ? 'Select an open batch…' : 'No open batch — the office opens one'}
-              </option>
-              {batches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.lot_code} · {b.batch_type}
-                  {b.input_weight_lb ? ` · ${Number(b.input_weight_lb).toFixed(0)} lb in` : ''}
-                </option>
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Last labels</h3>
+          <table className="t">
+            <thead><tr><th>Serial</th><th>Product</th><th className="num">Net</th><th className="num">ms</th><th></th><th></th></tr></thead>
+            <tbody>
+              {(st?.recent || []).map((r) => (
+                <tr key={r.serial}>
+                  <td className="mono">{r.serial}</td>
+                  <td>{r.product}{r.customer && <div className="muted">{r.customer}</div>}</td>
+                  <td className="num">{r.lb.toFixed(2)}</td>
+                  <td className="num">{r.ms ?? '—'}</td>
+                  <td>{r.failed ? <span className="chip bad">not printed</span>
+                    : r.uploaded === false ? <span className="chip bad" title={r.uploadError}>upload error</span>
+                    : r.uploaded ? <span className="chip ok">saved</span> : <span className="chip warn">uploading</span>}</td>
+                  <td>{!r.failed && <button className="btn small" onClick={() => agent.reprint(r.serial)}>Reprint</button>}</td>
+                </tr>
               ))}
-            </select>
-          </div>
+            </tbody>
+          </table>
+          {st?.upload_queue > 0 && <div className="muted">{st.upload_queue} label(s) waiting to upload</div>}
         </div>
-        {lot ? (
-          <div style={{ marginTop: 10 }}>
-            Printing into lot <span className="serial">{lot.lot_code}</span>
-            {batch?.output_packs > 0 && (
-              <span className="custmeta"> · {batch.output_packs} packs out so far</span>
-            )}
-          </div>
-        ) : (
-          <div className="custmeta" style={{ marginTop: 10 }}>
-            Nothing can be printed until a batch is open. Ask the office to open one on the Batches screen.
-          </div>
-        )}
       </div>
 
-      <div className="panel weighpanel">
-        <div className="weight">
-          {scaleUp && lb !== null ? lb.toFixed(2) : '——.——'}
-          <span className="unit">lb</span>
-          {scaleUp && lb !== null && (wt.stable
-            ? <span className="chip IN_STOCK">STABLE</span>
-            : <span className="chip PENDING">MOTION</span>)}
-        </div>
-        {!scaleUp && (
-          <div className="row" style={{ marginTop: 8 }}>
-            <div className="field" style={{ maxWidth: 180 }}>
-              <label>Manual weight (lb)</label>
-              <input type="number" step="0.01" min="0.01" value={manualLb} onChange={(e) => setManualLb(e.target.value)} />
+      <div>
+        <div className="panel">
+          <div className="row">
+            <button className={`btn ${mode === 'inventory' ? 'primary' : ''}`} onClick={() => { setMode('inventory'); setLineId(''); apply({ lineId: '' }); }}>Pack to inventory</button>
+            <button className={`btn ${mode === 'order' ? 'primary' : ''}`} onClick={() => setMode('order')}>Pack to order</button>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <label>Lot&nbsp;
+              <select className="txt" value={lot} onChange={(e) => { setLot(e.target.value); apply({ lot: e.target.value }); }}>
+                {!cfg?.lots.length && <option value="">no open lot</option>}
+                {cfg?.lots.map((l) => <option key={l.id} value={l.code}>{l.code}{l.note ? ` — ${l.note}` : ''}</option>)}
+              </select>
+            </label>
+            <button className="btn" onClick={newLot}>Start new lot</button>
+            {st?.serials_left != null && <span className="muted">{st.serials_left} serials reserved</span>}
+          </div>
+          {mode === 'order' && (
+            <div style={{ marginTop: 10 }}>
+              <select className="txt" style={{ width: '100%' }} value={orderId} onChange={(e) => { setOrderId(e.target.value); setLineId(''); }}>
+                <option value="">Choose an order…</option>
+                {cfg?.orders.map((o) => <option key={o.id} value={o.id}>{o.doc_number} · {o.customer_name}{o.ship_date ? ` · ships ${o.ship_date}` : ''}</option>)}
+              </select>
+              {order && (
+                <div className="tiles" style={{ marginTop: 10 }}>
+                  {order.lines.map((l) => (
+                    <button key={l.id} className={`tile ${String(l.id) === lineId ? 'on' : ''}`}
+                      onClick={() => { setLineId(String(l.id)); setProductId(l.product_id); apply({ lineId: String(l.id), productId: l.product_id }); }}>
+                      <div className="name">{productName(l.product_id)}</div>
+                      <div className="code">{l.cases_packed} of {Number(l.qty_ordered)} cs</div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        )}
-        <div className="row" style={{ marginTop: 12 }}>
-          <button className="btn print" disabled={!product || !lot}
-            onClick={() => doPrint(scaleUp ? (wt.stable ? lb : 0) : Number(manualLb))}>
-            PRINT LABEL
-          </button>
-          <label className="autotoggle">
-            <input type="checkbox" checked={auto} onChange={(e) => { armedRef.current = true; setAuto(e.target.checked); }} />
-            Auto-print on stable weight
-          </label>
+          )}
         </div>
-        {openPacks.length > 0 && (
-          <div className="row" style={{ marginTop: 12, justifyContent: 'center' }}>
-            <button className="btn secondary" onClick={closeCase}>
-              Close case — {openPacks.length} pack{openPacks.length === 1 ? '' : 's'},{' '}
-              {openPacks.reduce((s, p) => s + Number(p.weightLb), 0).toFixed(2)} lb
-            </button>
+        {mode === 'inventory' && (
+          <div className="panel">
+            <div className="tiles">
+              {products.map((p) => (
+                <button key={p.id} className={`tile ${p.id === productId ? 'on' : ''}`} onClick={() => { setProductId(p.id); apply({ productId: p.id }); }}>
+                  <div className="name">{p.label_name || p.name}</div>
+                  <div className="code">PLU {p.code}{Number(p.tare_lb) ? ` · tare ${Number(p.tare_lb).toFixed(2)}` : ''}</div>
+                </button>
+              ))}
+            </div>
+            {!products.length && <div className="muted">No items yet — add them under Office → Items.</div>}
           </div>
         )}
+        {st?.sim && <SimScale />}
       </div>
+    </div>
+  );
+}
 
-      {stamp && <div className={`stamp ${stamp.kind}`}>{stamp.title}<small>{stamp.detail}</small></div>}
-
-      <div className="eyebrow">Printed today at this station ({prints.length})</div>
-      <div className="panel">
-        {prints.length === 0 ? <div className="empty">Nothing printed yet today.</div> : (
-          <table><tbody>
-            {prints.map((p) => (
-              <tr key={p.serial} style={p.voided ? { opacity: .45 } : undefined}>
-                <td>{p.productName}{p.boxed && !p.isCase && <span className="custmeta"> · in case</span>}</td>
-                <td className="num">{Number(p.weightLb).toFixed(2)} lb</td>
-                <td><span className="serial">{p.serial}</span></td>
-                <td>{p.voided ? <span className="chip VOID">VOID</span> : !p.printed ? <span className="chip PENDING">NOT PRINTED</span> : null}</td>
-                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {!p.voided && <>
-                    <button className="btn secondary mini" onClick={() => reprint(p)}>Reprint</button>{' '}
-                    {p.caseId && <button className="btn danger mini" onClick={() => voidCase(p)}>Void</button>}
-                  </>}
-                </td>
-              </tr>
-            ))}
-          </tbody></table>
-        )}
+// Only shown when the agent runs with --sim: put a "case" on the fake scale.
+function SimScale() {
+  const [v, setV] = useState('12.40');
+  const set = (lb) => fetch(agentUrl() + '/sim/weight', { method: 'POST', body: JSON.stringify({ lb }) });
+  return (
+    <div className="panel">
+      <b>Simulated scale</b>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input className="txt mono" value={v} onChange={(e) => setV(e.target.value)} style={{ width: 100 }} />
+        <button className="btn" onClick={() => set(Number(v))}>Place case</button>
+        <button className="btn" onClick={() => set(0)}>Lift off</button>
       </div>
-    </>
+    </div>
   );
 }

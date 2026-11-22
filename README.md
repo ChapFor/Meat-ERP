@@ -1,36 +1,34 @@
-# Chapel Ford Meat ERP — Phase 1
+# Chapel Ford ERP v2
 
-Inventory + order entry + pack-to-order with GS1-128 case labels.
-VistaTrac-style foundation; batching/yields and QuickBooks export bolt on next.
+Plant-floor inventory, labeling, pack-to-order and shipping, with orders and
+invoicing in QuickBooks Online.
 
-## Layout
-- `server/` — Node/Express API + Postgres schema (migrations, seed)
-- `client/` — React app: Station (weigh + print), Scan-in, Inventory, Orders,
-  Packing, Customers, Items
-- `station/` — local hardware bridge for the station PC (scale serial + ZT411
-  raw ZPL) + label reference and integration notes
+| Where | What |
+|---|---|
+| QuickBooks Online | Enter orders as **Estimates** (qty in cases, rate in $/lb). They appear in the ERP within a minute. |
+| Scale station | Weigh → label prints in under a second → case is in inventory, or packed straight onto an order. |
+| Shipping dock | Scan the pick ticket, scan the cases. Wrong / duplicate / void cases are refused. **Finish & manifest**. |
+| Back in QuickBooks | The estimate now shows shipped pounds per line, priced per lb, with "Ordered 10 cs, shipped 10 cs, 412.60 lb". |
 
-## Case lifecycle
-PRINT (station) → **PENDING** → scan-in → **IN_STOCK** → pack scan → **ALLOCATED**
-→ ship → **SHIPPED**. Misprints stay PENDING and get voided; the Scan-in screen
-shows a live "printed, not yet scanned" list so nothing goes missing.
+## Deploy on Railway
+1. Railway service → Settings → Root Directory **empty**; build `npm run build`, start `npm start`.
+2. Add a Postgres database and set variables:
 
-## Run locally
-1. Postgres running; copy `server/.env.example` → `server/.env`, set `DATABASE_URL`.
-2. `cd server && npm install && npm run seed && npm run dev`
-   (migrations apply themselves on boot; `npm run migrate` runs them standalone)
-3. `cd client && npm install && npm run dev` → http://localhost:5173
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | from the Railway Postgres |
+| `APP_PASSCODE` | shared passcode for the web app and the station agent |
+| `PUBLIC_URL` | `https://<your-app>.up.railway.app` |
+| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | from developer.intuit.com → your app → Keys |
+| `QBO_ENVIRONMENT` | `sandbox` first, then `production` |
+| `QBO_CREATE_INVOICE` | `true` to also create the invoice at manifest (default `false`) |
 
-## Deploy (Railway or similar)
-- Provision Postgres and set `DATABASE_URL`; migrations apply on every boot.
-  Seed the starter item list once with `npm run seed` (or add items in-app).
-- Service **Root Directory must be empty** — the app lives at the repo root.
-- `cd client && npm run build`, then `cd server && npm start` — the API serves
-  `client/dist` itself, so one service hosts everything.
-- On the station PC: open the deployed app in Chrome (Station tab) and run the
-  local bridge — see `station/bridge/README.md`.
+3. In the Intuit app, add the redirect URI `https://<your-app>.up.railway.app/qbo/callback`.
+4. Open the app → Office → QuickBooks → **Connect to QuickBooks**.
+5. Office → Items: add your PLUs (tare, min/max weight, shelf life) and link each to its QuickBooks item.
 
-## Next phases
-- Batching + yield tracking (live weight in → cut weights out per lot)
-- Shipping confirmation + BOL / pack slip PDF
-- QuickBooks invoice export (IIF/CSV first, QBO API later) driven by shipped case weights
+v2 uses a **new database**. Point `DATABASE_URL` at a fresh Postgres (do not
+reuse the v1 database). Labels printed by v1 still scan.
+
+## Station PC setup
+See `station/agent/README.txt`.

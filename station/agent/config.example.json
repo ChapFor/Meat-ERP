@@ -1,0 +1,25 @@
+{
+  "station": "Chapel-Ford-Scale01",
+  "server": "https://YOUR-APP.up.railway.app",
+  "passcode": "same as APP_PASSCODE on the server",
+  "farmName": "CHAPEL FORD FARM",
+  "port": 9410,
+  "leaseSize": 50,
+  "scale": {
+    "port": "COM6",
+    "baudRate": 9600,
+    "pollCmd": "W\r",
+    "pollMs": 40,
+    "divisor": 100,
+    "sim": false
+  },
+  "stable": { "count": 3, "tolerance": 0.02, "windowMs": 500 },
+  "autoPrint": { "minLb": 0.5, "rearmLb": 0.3 },
+  "printer": {
+    "mode": "usb",
+    "name": "ZEBRA ZT411-203dpi ZPL",
+    "host": "",
+    "port": 9100,
+    "sim": false
+  }
+}

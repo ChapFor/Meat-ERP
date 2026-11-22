@@ -1,79 +1,55 @@
 import { Router } from 'express';
 import { q } from '../db.js';
+import { h, bad, notFound } from '../util.js';
+
 const r = Router();
+const FIELDS = ['code', 'name', 'label_name', 'tare_lb', 'min_lb', 'max_lb', 'shelf_life_days', 'qbo_item_id', 'qbo_item_name', 'active'];
 
-const UNITS = ['lb', 'case', 'each'];
-// The code is printed into GS1 AI (91) and into the ZPL stream. ^ and ~ are ZPL
-// control chars and parens break the human-readable parse, so keep it to
-// alphanumerics and dashes.
-const CODE_RE = /^[A-Za-z0-9-]{1,20}$/;
+function clean(body) {
+  const out = {};
+  for (const f of FIELDS) if (f in body) out[f] = body[f] === '' ? null : body[f];
+  if ('code' in out && !/^\d{1,8}$/.test(String(out.code ?? ''))) throw bad('PLU must be 1–8 digits (it is printed into the barcode)');
+  if ('name' in out && !String(out.name ?? '').trim()) throw bad('name is required');
+  for (const f of ['tare_lb', 'min_lb', 'max_lb']) if (out[f] != null && !(Number(out[f]) >= 0)) throw bad(`${f} must be a number ≥ 0`);
+  if (out.min_lb != null && out.max_lb != null && Number(out.min_lb) > Number(out.max_lb)) throw bad('min weight is above max weight');
+  if (out.tare_lb === null) out.tare_lb = 0;
+  return out;
+}
 
-// ?all=1 includes deactivated items (the Items screen manages those).
-r.get('/', async (req, res, next) => {
-  try {
-    const { rows } = await q(
-      `SELECT p.*,
-         (SELECT COUNT(*) FROM cases c WHERE c.product_id = p.id AND c.status <> 'VOID'
-            AND NOT EXISTS (SELECT 1 FROM cases ch WHERE ch.parent_id = c.id))::int AS pack_count
-       FROM products p
-       WHERE ($1::bool IS TRUE OR p.active)
-       ORDER BY p.name`, [req.query.all === '1']);
-    res.json(rows);
-  } catch (e) { next(e); }
-});
+r.get('/', h(async (req, res) => {
+  const { rows } = await q(`
+    SELECT p.*,
+      (SELECT count(*)::int FROM cases c WHERE c.product_id = p.id AND c.status = 'IN_STOCK') AS in_stock,
+      (SELECT coalesce(sum(weight_lb),0) FROM cases c WHERE c.product_id = p.id AND c.status = 'IN_STOCK') AS in_stock_lb
+    FROM products p ORDER BY p.active DESC, p.name`);
+  res.json(rows);
+}));
 
-r.post('/', async (req, res, next) => {
-  try {
-    const code = String(req.body?.code ?? '').trim();
-    const name = String(req.body?.name ?? '').trim();
-    const unit = String(req.body?.unit ?? 'lb').trim() || 'lb';
-    if (!code || !name) return res.status(400).json({ error: 'item code and name are required' });
-    if (!CODE_RE.test(code))
-      return res.status(400).json({ error: 'item code must be 1-20 letters, numbers or dashes' });
-    if (!UNITS.includes(unit))
-      return res.status(400).json({ error: `unit must be one of ${UNITS.join(', ')}` });
+r.post('/', h(async (req, res) => {
+  const p = clean(req.body);
+  if (!p.code || !p.name) throw bad('PLU and name are required');
+  const cols = Object.keys(p);
+  const { rows } = await q(
+    `INSERT INTO products (${cols.join(',')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')}) RETURNING *`,
+    cols.map((c) => p[c]));
+  res.status(201).json(rows[0]);
+}));
 
-    const dup = (await q('SELECT id, name, active FROM products WHERE lower(code)=lower($1)', [code])).rows[0];
-    if (dup) return res.status(409).json({
-      error: `item code ${code} is already used by "${dup.name}"${dup.active ? '' : ' (deactivated)'}` });
+r.put('/:id', h(async (req, res) => {
+  const p = clean(req.body);
+  const cols = Object.keys(p);
+  if (!cols.length) throw bad('nothing to update');
+  const { rows } = await q(
+    `UPDATE products SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING *`,
+    [req.params.id, ...cols.map((c) => p[c])]);
+  if (!rows[0]) throw notFound('product not found');
+  // a newly mapped QuickBooks item links any open order lines already waiting on it
+  if (rows[0].qbo_item_id) {
+    await q(`UPDATE order_lines ol SET product_id = $1 FROM orders o
+             WHERE ol.order_id = o.id AND o.status = 'OPEN' AND ol.product_id IS NULL AND ol.qbo_item_id = $2`,
+      [rows[0].id, rows[0].qbo_item_id]);
+  }
+  res.json(rows[0]);
+}));
 
-    const { rows } = await q(
-      'INSERT INTO products (code, name, unit) VALUES ($1,$2,$3) RETURNING *', [code, name, unit]);
-    res.status(201).json(rows[0]);
-  } catch (e) { next(e); }
-});
-
-r.patch('/:id', async (req, res, next) => {
-  try {
-    const { name, unit, active, code, market_value_per_lb } = req.body ?? {};
-    if (code !== undefined) {
-      const c = String(code).trim();
-      if (!CODE_RE.test(c))
-        return res.status(400).json({ error: 'item code must be 1-20 letters, numbers or dashes' });
-      const dup = (await q(
-        'SELECT id FROM products WHERE lower(code)=lower($1) AND id <> $2', [c, req.params.id])).rows[0];
-      if (dup) return res.status(409).json({ error: `item code ${c} is already in use` });
-    }
-    if (unit !== undefined && !UNITS.includes(String(unit)))
-      return res.status(400).json({ error: `unit must be one of ${UNITS.join(', ')}` });
-    if (name !== undefined && !String(name).trim())
-      return res.status(400).json({ error: 'item name is required' });
-
-    // market value per lb is the basis for batch cost allocation; '' clears it
-    const mv = market_value_per_lb === undefined ? undefined
-      : (market_value_per_lb === '' || market_value_per_lb === null ? null : Number(market_value_per_lb));
-    if (mv !== undefined && mv !== null && !(Number.isFinite(mv) && mv >= 0))
-      return res.status(400).json({ error: 'market value per lb must be a positive number' });
-
-    const { rows } = await q(
-      `UPDATE products SET
-         name = COALESCE($2,name), unit = COALESCE($3,unit),
-         active = COALESCE($4,active), code = COALESCE($5,code),
-         market_value_per_lb = CASE WHEN $7::bool THEN $6::numeric ELSE market_value_per_lb END
-       WHERE id=$1 RETURNING *`,
-      [req.params.id, name?.trim(), unit, active, code?.trim(), mv ?? null, mv !== undefined]);
-    if (!rows[0]) return res.status(404).json({ error: 'item not found' });
-    res.json(rows[0]);
-  } catch (e) { next(e); }
-});
 export default r;

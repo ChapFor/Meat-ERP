@@ -1,89 +1,137 @@
--- Chapel Ford Meat ERP — Phase 1 schema
--- Postgres 14+
+-- Chapel Ford ERP v2 — initial schema.
+-- Weights are lb throughout. Every printed label is one row in `cases`.
 
 CREATE TABLE products (
-  id          SERIAL PRIMARY KEY,
-  code        TEXT NOT NULL UNIQUE,          -- internal item code, goes in AI (91)
-  name        TEXT NOT NULL,
-  unit        TEXT NOT NULL DEFAULT 'lb',    -- lb | case | each
-  active      BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id              serial PRIMARY KEY,
+  code            text NOT NULL UNIQUE CHECK (code ~ '^[0-9]{1,8}$'),  -- PLU, goes in AI (91)
+  name            text NOT NULL,
+  label_name      text,                       -- printed name if different from name
+  tare_lb         numeric(8,2) NOT NULL DEFAULT 0,   -- subtracted from gross at the station
+  min_lb          numeric(8,2),               -- out-of-spec weights are refused at the station
+  max_lb          numeric(8,2),
+  shelf_life_days integer,
+  qbo_item_id     text UNIQUE,                -- QuickBooks Online Item.Id
+  qbo_item_name   text,
+  active          boolean NOT NULL DEFAULT true,
+  created_at      timestamptz NOT NULL DEFAULT now()
 );
 
+-- Lot = one run within a day: YYMMDD-B{n}.
 CREATE TABLE lots (
-  id          SERIAL PRIMARY KEY,
-  lot_code    TEXT NOT NULL UNIQUE,          -- e.g. 260812-B2 (pack date + batch within day)
-  pack_date   DATE NOT NULL,
-  batch_no    INT  NOT NULL,                 -- batch within the day
-  species     TEXT,
-  notes       TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id           serial PRIMARY KEY,
+  code         text NOT NULL UNIQUE CHECK (code ~ '^[0-9]{6}-B[0-9]+$'),
+  pack_date    date NOT NULL,
+  batch_no     integer NOT NULL,
+  note         text,
+  status       text NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','CLOSED')),
+  next_serial  integer NOT NULL DEFAULT 1,     -- next unleased suffix
+  created_at   timestamptz NOT NULL DEFAULT now(),
   UNIQUE (pack_date, batch_no)
 );
 
-CREATE TYPE case_status AS ENUM ('PENDING','IN_STOCK','ALLOCATED','SHIPPED','VOID');
-
-CREATE TABLE cases (
-  id            SERIAL PRIMARY KEY,
-  serial        TEXT NOT NULL UNIQUE,        -- AI (21)
-  product_id    INT NOT NULL REFERENCES products(id),
-  lot_id        INT NOT NULL REFERENCES lots(id),
-  net_weight_lb NUMERIC(7,2) NOT NULL CHECK (net_weight_lb > 0),
-  status        case_status NOT NULL DEFAULT 'PENDING',
-  printed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  scanned_in_at TIMESTAMPTZ,
-  voided_at     TIMESTAMPTZ,
-  void_reason   TEXT,
-  order_line_id INT,                          -- set when ALLOCATED / SHIPPED
-  shipped_at    TIMESTAMPTZ
+-- Serial blocks handed to stations so printing never waits on the network.
+CREATE TABLE serial_leases (
+  id          serial PRIMARY KEY,
+  lot_id      integer NOT NULL REFERENCES lots(id),
+  station     text NOT NULL,
+  first_no    integer NOT NULL,
+  last_no     integer NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_cases_status  ON cases(status);
-CREATE INDEX idx_cases_product ON cases(product_id);
-CREATE INDEX idx_cases_lot     ON cases(lot_id);
 
 CREATE TABLE customers (
-  id          SERIAL PRIMARY KEY,
-  name        TEXT NOT NULL,
-  contact     TEXT,
-  email       TEXT,
-  phone       TEXT,
-  notes       TEXT,
-  active      BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id           serial PRIMARY KEY,
+  qbo_id       text UNIQUE,
+  name         text NOT NULL,
+  updated_at   timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TYPE order_status AS ENUM ('OPEN','PACKING','PACKED','SHIPPED','INVOICED','CANCELLED');
-
+-- Orders are created in QuickBooks Online (Estimates) and mirrored here.
 CREATE TABLE orders (
-  id          SERIAL PRIMARY KEY,
-  customer_id INT NOT NULL REFERENCES customers(id),
-  po_number   TEXT,
-  order_date  DATE NOT NULL DEFAULT CURRENT_DATE,
-  ship_date   DATE,
-  status      order_status NOT NULL DEFAULT 'OPEN',
-  notes       TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id            serial PRIMARY KEY,
+  qbo_id        text UNIQUE,
+  qbo_sync_token text,
+  doc_number    text NOT NULL,
+  customer_id   integer REFERENCES customers(id),
+  customer_name text NOT NULL,
+  txn_date      date,
+  ship_date     date,
+  memo          text,
+  status        text NOT NULL DEFAULT 'OPEN'
+                CHECK (status IN ('OPEN','MANIFESTED','CANCELLED')),
+  manifested_at timestamptz,
+  qbo_writeback_status text,                 -- null | 'PENDING' | 'DONE' | 'ERROR'
+  qbo_writeback_error  text,
+  qbo_invoice_id text,
+  qbo_updated_at timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX orders_status_idx ON orders (status, ship_date);
 
 CREATE TABLE order_lines (
-  id          SERIAL PRIMARY KEY,
-  order_id    INT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-  product_id  INT NOT NULL REFERENCES products(id),
-  qty_cases   INT,                            -- either/both may be set
-  qty_lb      NUMERIC(9,2),
-  notes       TEXT
+  id            serial PRIMARY KEY,
+  order_id      integer NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  qbo_line_id   text,
+  line_no       integer NOT NULL,
+  product_id    integer REFERENCES products(id),      -- null = QBO item not mapped to a PLU
+  qbo_item_id   text,
+  item_name     text,
+  description   text,
+  qty_ordered   numeric(10,2) NOT NULL,               -- cases, as entered in QuickBooks
+  unit_price    numeric(10,4),                        -- $ per lb
+  UNIQUE (order_id, line_no)
 );
-CREATE INDEX idx_lines_order ON order_lines(order_id);
 
-ALTER TABLE cases
-  ADD CONSTRAINT fk_cases_order_line
-  FOREIGN KEY (order_line_id) REFERENCES order_lines(id);
-
--- audit trail of every pack scan
-CREATE TABLE pack_scans (
-  id            SERIAL PRIMARY KEY,
-  case_id       INT NOT NULL REFERENCES cases(id),
-  order_line_id INT NOT NULL REFERENCES order_lines(id),
-  scanned_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  undone        BOOLEAN NOT NULL DEFAULT FALSE
+CREATE TABLE cases (
+  id            bigserial PRIMARY KEY,
+  serial        text NOT NULL UNIQUE,                 -- {lot}-{suffix}
+  product_id    integer NOT NULL REFERENCES products(id),
+  lot_id        integer NOT NULL REFERENCES lots(id),
+  weight_lb     numeric(8,2) NOT NULL CHECK (weight_lb > 0),
+  status        text NOT NULL DEFAULT 'IN_STOCK'
+                CHECK (status IN ('IN_STOCK','ALLOCATED','SHIPPED','VOID')),
+  order_line_id integer REFERENCES order_lines(id),
+  station       text,
+  printed_at    timestamptz NOT NULL,
+  received_at   timestamptz NOT NULL DEFAULT now(),   -- when the upload reached the server
+  allocated_at  timestamptz,
+  shipped_at    timestamptz,
+  voided_at     timestamptz,
+  void_reason   text,
+  print_ms      integer                               -- stable weight → printer accepted job
 );
+CREATE INDEX cases_status_product_idx ON cases (status, product_id);
+CREATE INDEX cases_order_line_idx ON cases (order_line_id);
+CREATE INDEX cases_lot_idx ON cases (lot_id);
+
+-- Audit trail of every scan and status change.
+CREATE TABLE case_events (
+  id        bigserial PRIMARY KEY,
+  case_id   bigint NOT NULL REFERENCES cases(id),
+  event     text NOT NULL,          -- PRINTED | ALLOCATED | UNALLOCATED | SHIPPED | VOIDED
+  order_id  integer REFERENCES orders(id),
+  detail    text,
+  at        timestamptz NOT NULL DEFAULT now()
+);
+
+-- QuickBooks Online connection (single company).
+CREATE TABLE qbo_connection (
+  id               integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  realm_id         text NOT NULL,
+  access_token     text NOT NULL,
+  refresh_token    text NOT NULL,
+  access_expires   timestamptz NOT NULL,
+  refresh_expires  timestamptz,
+  last_sync_at     timestamptz,
+  last_sync_error  text,
+  connected_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE settings (
+  key   text PRIMARY KEY,
+  value text
+);
+
+-- Raw QuickBooks Line array, kept so a write-back can rebuild every line
+-- (a sparse update replaces the whole Line list).
+ALTER TABLE orders ADD COLUMN qbo_lines_raw jsonb;

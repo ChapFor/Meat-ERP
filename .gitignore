@@ -1,14 +1,8 @@
 node_modules/
 client/dist/
-station/bridge/config.json
-.claude/
-server/fixtures/
-
-# Secrets. Broad on purpose: a file named server.env or .env.local slipped past
-# the old two-line list, and one committed password is one too many.
 .env
-*.env
-.env.*
-server.env*
-!.env.example
-farm-sync/sync.log
+station/agent/config.json
+station/agent/preamble.zpl
+station/agent/label.zpl
+station/agent/upload-queue.json
+station/agent/agent.log

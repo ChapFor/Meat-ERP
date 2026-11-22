@@ -1,0 +1,14 @@
+{
+  "name": "meat-erp-station-agent",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node agent.js",
+    "sim": "node agent.js --sim"
+  },
+  "dependencies": {
+    "serialport": "^12.0.0"
+  },
+  "engines": { "node": ">=20" }
+}

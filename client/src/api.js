@@ -1,21 +1,24 @@
-const base = import.meta.env.VITE_API_URL || '';
-async function req(path, opts = {}) {
-  const res = await fetch(base + path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
+// Cloud API client. The passcode is kept in this browser after login.
+const key = 'cf_passcode';
+export const passcode = { get: () => localStorage.getItem(key) || '', set: (p) => localStorage.setItem(key, p), clear: () => localStorage.removeItem(key) };
+
+export class ApiError extends Error {
+  constructor(status, data) { super(data?.error || `error ${status}`); this.status = status; this.data = data; }
+}
+
+async function req(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Passcode': passcode.get() },
+    body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(data.error || `${res.status} error`);
-    err.status = res.status;
-    throw err;
-  }
+  if (res.status === 401 && path !== '/api/login') window.dispatchEvent(new Event('cf-logout'));
+  if (!res.ok) throw new ApiError(res.status, data);
   return data;
 }
 export const api = {
-  get: (p) => req(p),
-  post: (p, body) => req(p, { method: 'POST', body }),
-  put: (p, body) => req(p, { method: 'PUT', body }),
-  patch: (p, body) => req(p, { method: 'PATCH', body }),
+  get: (p) => req('GET', p),
+  post: (p, b) => req('POST', p, b || {}),
+  put: (p, b) => req('PUT', p, b || {}),
 };
