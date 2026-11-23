@@ -87,7 +87,8 @@ export async function pullOrders({ full = false } = {}) {
     const since = !full && conn.last_sync_at ? new Date(new Date(conn.last_sync_at) - 5 * 60000) : null;
     const where = since
       ? `MetaData.LastUpdatedTime > '${isoNoMs(since)}'`
-      : `TxnStatus = 'Pending' AND TxnDate > '${new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10)}'`;
+      // TxnStatus is not queryable in QuickBooks; applyEstimate skips closed ones.
+      : `TxnDate > '${new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10)}'`;
     const started = new Date();
     try {
       const estimates = await query('Estimate', where);

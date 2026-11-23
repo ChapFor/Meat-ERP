@@ -44,6 +44,7 @@ const mock = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     if (u.pathname.endsWith('/query')) {
       const sql = u.searchParams.get('query');
+      assert.doesNotMatch(sql, /TxnStatus/, 'QuickBooks rejects TxnStatus in a query');
       if (sql.includes('FROM Estimate')) return json({ QueryResponse: { Estimate: sql.includes('STARTPOSITION 1 ') ? [estimate] : [] } });
       if (sql.includes('FROM Item')) return json({ QueryResponse: { Item: [] } });
     }
